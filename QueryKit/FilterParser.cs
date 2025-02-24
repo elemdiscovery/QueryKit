@@ -22,7 +22,7 @@ public static class FilterParser
         input = config?.ReplaceLogicalAliases(input) ?? input;
         input = config?.ReplaceComparisonAliases(input) ?? input;
         input = config?.PropertyMappings?.ReplaceAliasesWithPropertyPaths(input) ?? input;
-        
+
         var parameter = Expression.Parameter(typeof(T), "x");
         Expression expr;
         try
@@ -41,7 +41,7 @@ public static class FilterParser
 
         return Expression.Lambda<Func<T, bool>>(expr, parameter);
     }
-    
+
     private static Expression ReplaceDerivedProperties(Expression expr, IQueryKitConfiguration? config, ParameterExpression parameter)
     {
         if (config?.PropertyMappings == null)
@@ -57,10 +57,10 @@ public static class FilterParser
         from first in Parse.Letter.Once()
         from rest in Parse.LetterOrDigit.XOr(Parse.Char('_')).Many()
         select new string(first.Concat(rest).ToArray());
-    
+
     private static Parser<ComparisonOperator> ComparisonOperatorParser =>
         Parse.Char(ComparisonOperator.AllPrefix).Optional().Select(opt => opt.IsDefined)
-            .Then(hasHash => 
+            .Then(hasHash =>
                 Parse.String(ComparisonOperator.EqualsOperator().Operator()).Text()
                     .Or(Parse.String(ComparisonOperator.NotEqualsOperator().Operator()).Text())
                     .Or(Parse.String(ComparisonOperator.GreaterThanOrEqualOperator().Operator()).Text())
@@ -96,7 +96,7 @@ public static class FilterParser
         from op in Parse.String(LogicalOperator.AndOperator.Operator()).Text().Or(Parse.String(LogicalOperator.OrOperator.Operator()).Text())
         from trailingSpaces in Parse.WhiteSpace.Many()
         select LogicalOperator.GetByOperatorString(op);
-    
+
     private static Parser<string> DoubleQuoteParser
         => Parse.Char('"').Then(_ => Parse.AnyChar.Except(Parse.Char('"')).Many().Text().Then(innerValue => Parse.Char('"').Return(innerValue)));
 
@@ -107,7 +107,7 @@ public static class FilterParser
      * DateTime (in UTC): yyyy-MM-ddTHH:mm:ss.ffffffZ
      */
     private static Parser<string> TimeFormatParser => Parse.Regex(@"\d{2}:\d{2}:\d{2}").Text();
-    private static Parser<string> DateTimeFormatParser => 
+    private static Parser<string> DateTimeFormatParser =>
         from dateFormat in Parse.Regex(@"\d{4}-\d{2}-\d{2}").Text()
         from timeFormat in Parse.Regex(@"T\d{2}:\d{2}:\d{2}").Text().Optional().Select(x => x.GetOrElse(""))
         from timeZone in Parse.Regex(@"Z|[+-]\d{2}(:\d{2})?").Text().Optional().Select(x => x.GetOrElse(""))
@@ -120,7 +120,7 @@ public static class FilterParser
         select sign + number;
 
     private static Parser<string> GuidFormatParser => Parse.Regex(@"[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}").Text();
-    
+
     private static Parser<string> RawStringLiteralParser =>
         from openingQuotes in Parse.Regex("\"{3,}").Text()
         let count = openingQuotes.Length
@@ -138,10 +138,10 @@ public static class FilterParser
             .XOr(TimeFormatParser)
             .XOr(NumberParser)
             .XOr(RawStringLiteralParser.Or(DoubleQuoteParser))
-            .XOr(SquareBracketParser) 
+            .XOr(SquareBracketParser)
         from trailingSpaces in Parse.WhiteSpace.Many()
         select atSign.IsDefined ? "@" + value : value;
-    
+
     private static Parser<string> SquareBracketParser =>
         from openingBracket in Parse.Char('[')
         from content in Parse.String("null").Text()
@@ -198,49 +198,49 @@ public static class FilterParser
             targetType = targetType.GetGenericArguments()[0];
             return CreateRightExprFromType(targetType, right, op);
         }
-        
+
         var rawType = targetType;
-        
+
         targetType = TransformTargetTypeIfNullable(targetType);
 
         if (TypeConversionFunctions.TryGetValue(targetType, out var conversionFunction))
         {
             if (right == "null")
             {
-                if (rawType == typeof(Guid?))
-                {
-                    return Expression.Constant(null, typeof(string));
-                }
-                
                 return Expression.Constant(null, leftExprType);
             }
-            
+
             if (right.StartsWith("[") && right.EndsWith("]"))
             {
-                targetType = targetType == typeof(Guid) || targetType == typeof(Guid?) ? typeof(string) : targetType;
                 var values = right.Trim('[', ']').Split(',').Select(x => x.Trim()).ToList();
                 var elementType = targetType.IsArray ? targetType.GetElementType() : targetType;
-            
+
                 var expressions = values.Select(x =>
                 {
                     if (elementType == typeof(string) && x.StartsWith("\"") && x.EndsWith("\""))
                     {
                         x = x.Trim('"');
                     }
-            
+
                     var convertedValue = TypeConversionFunctions[elementType](x);
                     return Expression.Constant(convertedValue, elementType);
                 }).ToArray();
-            
+
                 var newArrayExpression = Expression.NewArrayInit(elementType, expressions);
                 return newArrayExpression;
             }
 
             if (targetType == typeof(string))
             {
-                right = right.Trim('"');
+                return Expression.Constant(right.Trim('"'), typeof(string));
             }
-            
+
+            if (targetType == typeof(Guid))
+            {
+                var guidValue = right.Trim('"');
+                return Expression.Constant(Guid.Parse(guidValue), typeof(Guid));
+            }
+
             if (targetType == typeof(DateTime))
             {
                 var dtStyle = right.EndsWith("Z") ? DateTimeStyles.AdjustToUniversal : DateTimeStyles.AssumeLocal;
@@ -255,7 +255,7 @@ public static class FilterParser
 
                 var isNullable = rawType == typeof(DateTime?);
                 if (!isNullable) return newExpr;
-                
+
                 var nullableDtCtor = typeof(DateTime?).GetConstructor(new[] { typeof(DateTime) });
                 newExpr = Expression.New(nullableDtCtor, newExpr);
                 return newExpr;
@@ -265,13 +265,13 @@ public static class FilterParser
             {
                 var dtStyle = right.EndsWith("Z") ? DateTimeStyles.AdjustToUniversal : DateTimeStyles.AssumeLocal;
                 var dto = DateTimeOffset.Parse(right, CultureInfo.InvariantCulture, dtStyle);
-    
+
                 var dtoCtor = typeof(DateTimeOffset).GetConstructor(new[] { typeof(long), typeof(TimeSpan) });
                 var newExpr = Expression.New(dtoCtor, Expression.Constant(dto.Ticks), Expression.Constant(dto.Offset));
 
                 var isNullable = rawType == typeof(DateTimeOffset?);
                 if (!isNullable) return newExpr;
-                
+
                 var nullableDtoCtor = typeof(DateTimeOffset?).GetConstructor(new[] { typeof(DateTimeOffset) });
                 newExpr = Expression.New(nullableDtoCtor, newExpr);
                 return newExpr;
@@ -285,12 +285,12 @@ public static class FilterParser
 
                 var isNullable = rawType == typeof(DateOnly?);
                 if (!isNullable) return newExpr;
-                
+
                 var nullableDateCtor = typeof(DateOnly?).GetConstructor(new[] { typeof(DateOnly) });
                 newExpr = Expression.New(nullableDateCtor, newExpr);
                 return newExpr;
             }
-            
+
             if (targetType == typeof(TimeOnly))
             {
                 var time = TimeOnly.Parse(right, CultureInfo.InvariantCulture);
@@ -314,15 +314,10 @@ public static class FilterParser
 
                 var isNullable = rawType == typeof(TimeOnly?);
                 if (!isNullable) return newExpr;
-                
+
                 var nullableTimeCtor = typeof(TimeOnly?).GetConstructor(new[] { typeof(TimeOnly) });
                 newExpr = Expression.New(nullableTimeCtor, newExpr);
                 return newExpr;
-            }
-
-            if (targetType == typeof(Guid))
-            {
-                return Expression.Constant(right, typeof(string)); 
             }
 
             var convertedValue = conversionFunction(right);
@@ -332,47 +327,47 @@ public static class FilterParser
         if (rawType.IsEnum || (Nullable.GetUnderlyingType(rawType)?.IsEnum ?? false))
         {
             var enumType = Nullable.GetUnderlyingType(rawType) ?? rawType;
-    
+
             if (right == "null" && Nullable.GetUnderlyingType(rawType) != null)
             {
                 return Expression.Constant(null, rawType);
             }
-            
+
             if (right.StartsWith("[") && right.EndsWith("]"))
             {
                 var values = right.Trim('[', ']').Split(',').Select(x => x.Trim()).ToList();
                 var elementType = targetType.IsArray ? targetType.GetElementType() : targetType;
-            
+
                 var expressions = values.Select<string, Expression>(x =>
                 {
                     if (elementType == typeof(string) && x.StartsWith("\"") && x.EndsWith("\""))
                     {
                         x = x.Trim('"');
                     }
-            
+
                     var enumValue = Enum.Parse(enumType, x);
                     var constant = Expression.Constant(enumValue, enumType);
-            
+
                     return constant;
                 }).ToArray();
-            
+
                 var newArrayExpression = Expression.NewArrayInit(enumType, expressions);
                 return newArrayExpression;
             }
-            
+
             var parsed = Enum.TryParse(enumType, right, out var enumValue);
-            if (!parsed) 
+            if (!parsed)
             {
                 throw new InvalidOperationException($"Unsupported value '{right}' for type '{targetType.Name}'");
             }
             var constant = Expression.Constant(enumValue, enumType);
 
             if (rawType == enumType) return constant;
-            
-            var nullableCtor = rawType.GetConstructor(new[] {enumType});
+
+            var nullableCtor = rawType.GetConstructor(new[] { enumType });
             return Expression.New(nullableCtor, constant);
         }
-        
+
         // for some complex derived expressions
         if (targetType == typeof(object))
         {
@@ -387,7 +382,7 @@ public static class FilterParser
             }
         }
 
-        throw new InvalidOperationException($"Unsupported value '{right}' for type '{targetType.Name}'");
+        throw new QueryKitParsingException($"Unsupported type: {targetType}");
     }
 
     private static Type TransformTargetTypeIfNullable(Type targetType)
@@ -425,13 +420,6 @@ public static class FilterParser
                 {
                     return Expression.Equal(Expression.Constant(true), Expression.Constant(true));
                 }
-                
-                if (temp.leftExpr.Type == typeof(Guid) || temp.leftExpr.Type == typeof(Guid?))
-                {
-                    var guidStringExpr = HandleGuidConversion(temp.leftExpr, temp.leftExpr.Type);
-                    return temp.op.GetExpression<T>(guidStringExpr, CreateRightExpr(temp.leftExpr, temp.right, temp.op),
-                        config?.DbContextType);
-                }
 
                 var rightExpr = CreateRightExpr(temp.leftExpr, temp.right, temp.op);
                 return temp.op.GetExpression<T>(temp.leftExpr, rightExpr, config?.DbContextType);
@@ -462,7 +450,7 @@ public static class FilterParser
 
                             var linqMethod = "SelectMany";
                             var selectMethod = typeof(Enumerable).GetMethods()
-                                .First(m => m.Name ==  linqMethod && m.GetParameters().Length == 2)
+                                .First(m => m.Name == linqMethod && m.GetParameters().Length == 2)
                                 .MakeGenericMethod(genericArgType, propertyType);
 
                             var innerParameter = Expression.Parameter(genericArgType, "y");
@@ -470,7 +458,7 @@ public static class FilterParser
                             Expression lambdaBody = Expression.PropertyOrField(innerParameter, propertyInfoForMethod.Name);
 
                             var type = typeof(IEnumerable<>).MakeGenericType(propertyType);
-                            lambdaBody =  Expression.Lambda(Expression.Convert(lambdaBody, type), innerParameter);
+                            lambdaBody = Expression.Lambda(Expression.Convert(lambdaBody, type), innerParameter);
 
                             return Expression.Call(selectMethod, member, lambdaBody);
                         }
@@ -514,15 +502,15 @@ public static class FilterParser
                 {
                     return Expression.PropertyOrField(expr, actualPropertyName);
                 }
-                catch(ArgumentException)
+                catch (ArgumentException)
                 {
                     var derivedPropertyInfo = config?.PropertyMappings?.GetDerivedPropertyInfoByQueryName(fullPropPath);
                     if (derivedPropertyInfo?.DerivedExpression != null)
                     {
                         return derivedPropertyInfo.DerivedExpression;
                     }
-                    
-                    if(config?.AllowUnknownProperties == true)
+
+                    if (config?.AllowUnknownProperties == true)
                     {
                         return Expression.Constant(true, typeof(bool));
                     }
@@ -540,7 +528,7 @@ public static class FilterParser
             return propertyExpression;
         });
     }
-    
+
     private static Type? GetInnerGenericType(Type type)
     {
         if (!IsEnumerable(type))
@@ -551,14 +539,14 @@ public static class FilterParser
         var innerGenericType = type.GetGenericArguments()[0];
         return GetInnerGenericType(innerGenericType);
     }
-    
+
     private static Parser<Expression> AtomicExprParser<T>(ParameterExpression parameter, IQueryKitConfiguration? config = null)
         => ComparisonExprParser<T>(parameter, config)
             .Or(Parse.Ref(() => ExprParser<T>(parameter, config)).Contained(Parse.Char('('), Parse.Char(')')));
 
     private static Parser<Expression> ExprParser<T>(ParameterExpression parameter, IQueryKitConfiguration? config = null)
         => OrExprParser<T>(parameter, config);
-    
+
     private static Parser<Expression> AndExprParser<T>(ParameterExpression parameter, IQueryKitConfiguration? config = null)
         => Parse.ChainOperator(
             LogicalOperatorParser.Where(x => x.Name == LogicalOperator.AndOperator.Operator()),
@@ -572,7 +560,7 @@ public static class FilterParser
             AndExprParser<T>(parameter, config),
             (op, left, right) => op.GetExpression<T>(left, right)
         );
-    
+
     private static Expression GetGuidToStringExpression(Expression leftExpr)
     {
         var toStringMethod = typeof(Guid).GetMethod("ToString", Type.EmptyTypes);
