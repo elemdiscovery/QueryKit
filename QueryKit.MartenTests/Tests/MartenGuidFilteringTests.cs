@@ -4,6 +4,8 @@ using QueryKit.MartenTests.Documents;
 using System.Collections.Generic;
 using System.Linq;
 using Marten.Linq;
+using QueryKit.Exceptions;
+using Marten;
 
 namespace QueryKit.MartenTests.Tests;
 
@@ -337,5 +339,97 @@ public class MartenGuidFilteringTests : TestBase
         doc9.Should().NotBeNull("matches SpecificDate AND Time conditions");
 
         results.FirstOrDefault(x => x.Id == nonMatchingDoc.Id).Should().BeNull("doesn't match any conditions");
+    }
+
+    [Fact]
+    public async Task should_handle_malformed_guid_gracefully()
+    {
+        // Arrange
+        var faker = new Faker();
+        var doc1 = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = faker.Lorem.Sentence()
+        };
+
+        Session.Store(doc1);
+        await Session.SaveChangesAsync();
+
+        var input = """Id == "not-a-guid" """;
+
+        // Act & Assert
+        var queryable = Session.Query<TestDocument>();
+        var exception = await Assert.ThrowsAsync<ParsingException>(() =>
+            queryable.ApplyQueryKitFilter(input).ToListAsync());
+        exception.Message.Should().Contain("parsing failure");
+    }
+
+    [Fact]
+    public async Task should_handle_invalid_guid_in_array()
+    {
+        // Arrange
+        var faker = new Faker();
+        var doc1 = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = faker.Lorem.Sentence()
+        };
+
+        Session.Store(doc1);
+        await Session.SaveChangesAsync();
+
+        var input = """Id ^^ ["not-a-guid", "also-not-a-guid"]""";
+
+        // Act & Assert
+        var queryable = Session.Query<TestDocument>();
+        var exception = await Assert.ThrowsAsync<ParsingException>(() =>
+            queryable.ApplyQueryKitFilter(input).ToListAsync());
+        exception.Message.Should().Contain("parsing failure");
+    }
+
+    [Fact]
+    public async Task should_handle_empty_guid_string()
+    {
+        // Arrange
+        var faker = new Faker();
+        var doc1 = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = faker.Lorem.Sentence()
+        };
+
+        Session.Store(doc1);
+        await Session.SaveChangesAsync();
+
+        var input = """Id == "" """;
+
+        // Act & Assert
+        var queryable = Session.Query<TestDocument>();
+        var exception = await Assert.ThrowsAsync<ParsingException>(() =>
+            queryable.ApplyQueryKitFilter(input).ToListAsync());
+        exception.Message.Should().Contain("parsing failure");
+    }
+
+    [Fact]
+    public async Task should_handle_non_guid_string()
+    {
+        // Arrange
+        var faker = new Faker();
+        var doc1 = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = faker.Lorem.Sentence()
+        };
+
+        Session.Store(doc1);
+        await Session.SaveChangesAsync();
+
+        var input = """Id == "123" """;
+
+        // Act & Assert
+        var queryable = Session.Query<TestDocument>();
+        var exception = await Assert.ThrowsAsync<ParsingException>(() =>
+            queryable.ApplyQueryKitFilter(input).ToListAsync());
+        exception.Message.Should().Contain("parsing failure");
     }
 }
