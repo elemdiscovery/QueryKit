@@ -10,6 +10,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      checks: write      # required by dorny/test-reporter
+      pull-requests: write    # required for PR comments
     strategy:
       matrix:
         dotnet-version: ['9.0.x']
