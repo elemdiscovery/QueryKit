@@ -48,12 +48,11 @@ jobs:
         run: dotnet build --configuration Release --no-restore /p:Version=${{ steps.gitversion.outputs.semVer }}
       
       - name: Test
-        working-directory: QueryKit.UnitTests
         run: |
           dotnet test --no-restore --verbosity normal \
             --logger "trx;LogFileName=test-results.trx" \
             --collect:"XPlat Code Coverage" \
-            --results-directory ./TestResults
+            --results-directory TestResults
       
       - name: Test Report
         uses: dorny/test-reporter@v1
