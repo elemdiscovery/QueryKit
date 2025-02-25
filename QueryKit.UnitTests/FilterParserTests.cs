@@ -38,11 +38,11 @@ public class FilterParserTests
     public void complex_with_lots_of_types()
     {
         var input =
-            """""((Title @=* "waffle & chicken" && Age > 30) || Id == "aa648248-cb69-4217-ac95-d7484795afb2" || Title == "lamb" || Title == null) && (Age < 18 || (BirthMonth == 1 && Title _= "ally")) || Rating > 3.5 || SpecificDate == 2022-07-01T00:00:03Z && (Date == 2022-07-01 || Time == 00:00:03)""""";
+            """""((Title @=* "waffle & chicken" && Age > 30) || Id == "aa648248-cb69-4217-ac95-d7484795afb2" || Title == "lamb" || Title == null) && (Age < 18 || (BirthMonth == January && Title _= "ally")) || Rating > 3.5 || SpecificDate == 2022-07-01T00:00:03Z && (Date == 2022-07-01 || Time == 00:00:03)""""";
 
         var filterExpression = FilterParser.ParseFilter<TestingPerson>(input);
         filterExpression.ToString().Should()
-            .Be(""""x => (((((((x.Title.ToLower().Contains("waffle & chicken".ToLower()) AndAlso (x.Age > 30)) OrElse (x.Id.ToString() == "aa648248-cb69-4217-ac95-d7484795afb2")) OrElse (x.Title == "lamb")) OrElse (x.Title == null)) AndAlso ((x.Age < 18) OrElse ((x.BirthMonth == new Nullable`1(January)) AndAlso x.Title.StartsWith("ally")))) OrElse (x.Rating > 3.5)) OrElse ((x.SpecificDate == new Nullable`1(new DateTimeOffset(637922304030000000, 00:00:00))) AndAlso ((x.Date == new Nullable`1(new DateOnly(2022, 7, 1))) OrElse (x.Time == new Nullable`1(new TimeOnly(0, 0, 3, 0, 0))))))"""");
+            .Be(""""x => (((((((x.Title.ToLower().Contains("waffle & chicken".ToLower()) AndAlso (x.Age > 30)) OrElse (x.Id == aa648248-cb69-4217-ac95-d7484795afb2)) OrElse (x.Title == "lamb")) OrElse (x.Title == null)) AndAlso ((x.Age < 18) OrElse ((x.BirthMonth == new Nullable`1(January)) AndAlso x.Title.StartsWith("ally")))) OrElse (x.Rating > 3.5)) OrElse ((x.SpecificDate == new Nullable`1(new DateTimeOffset(637922304030000000, 00:00:00))) AndAlso ((x.Date == new Nullable`1(new DateOnly(2022, 7, 1))) OrElse (x.Time == new Nullable`1(new TimeOnly(0, 0, 3, 0, 0))))))"""");
     }
 
     [Fact]
@@ -93,7 +93,7 @@ public class FilterParserTests
     {
         var input = $"""SecondaryId == null """;
         var filterExpression = FilterParser.ParseFilter<Recipe>(input);
-        filterExpression.ToString().Should().Be($"x => (IIF(x.SecondaryId.HasValue, x.SecondaryId.Value.ToString(), null) == null)");
+        filterExpression.ToString().Should().Be("x => (x.SecondaryId == null)");
     }
 
     [Fact]
@@ -225,7 +225,7 @@ public class FilterParserTests
         var input = """Id ^^ ["6d623e92-d2cf-4496-a2df-f49fa77328ee"]""";
         var filterExpression = FilterParser.ParseFilter<TestingPerson>(input);
         filterExpression.ToString().Should()
-            .Be(""""x => value(System.Collections.Generic.List`1[System.String]).Contains(x.Id.ToString())"""");
+            .Be(""""x => value(System.Collections.Generic.List`1[System.Guid]).Contains(x.Id)"""");
     }
 
     [Fact]

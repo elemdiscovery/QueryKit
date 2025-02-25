@@ -138,4 +138,204 @@ public class MartenGuidFilteringTests : TestBase
         results.Count.Should().Be(1);
         results[0].Id.Should().Be(guidToFind);
     }
+
+    [Fact]
+    public async Task can_filter_by_guid_in_operator()
+    {
+        // Arrange
+        var faker = new Faker();
+        var doc1 = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            RelatedId = Guid.NewGuid(),
+            Title = faker.Lorem.Sentence()
+        };
+        var doc2 = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            RelatedId = Guid.NewGuid(),
+            Title = faker.Lorem.Sentence()
+        };
+        var doc3 = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            RelatedId = Guid.NewGuid(),
+            Title = faker.Lorem.Sentence()
+        };
+
+        Session.Store(doc1, doc2, doc3);
+        await Session.SaveChangesAsync();
+
+        var input = $"""RelatedId ^^ ["{doc1.RelatedId}", "{doc3.RelatedId}"]""";
+
+        // Act
+        var queryable = Session.Query<TestDocument>();
+        var appliedQueryable = queryable.ApplyQueryKitFilter(input);
+        var results = appliedQueryable.ToList();
+
+        // Assert
+        results.Count.Should().Be(2);
+        results.Should().Contain(x => x.Id == doc1.Id);
+        results.Should().NotContain(x => x.Id == doc2.Id);
+        results.Should().Contain(x => x.Id == doc3.Id);
+    }
+
+    [Fact]
+    public async Task can_filter_with_complex_conditions()
+    {
+        // Arrange
+        var faker = new Faker();
+        var specificDateTime = new DateTimeOffset(2022, 7, 1, 0, 0, 3, TimeSpan.Zero);
+        var specificDate = new DateOnly(2022, 7, 1);
+        var specificTime = new TimeOnly(0, 0, 3);
+
+        // Document that should match via Rating > 3.5
+        var matchingDoc1 = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = "waffle & chicken special",
+            Age = 35,
+            Rating = 4.0M,  // This will match via Rating > 3.5
+            BirthMonth = BirthMonthEnum.February,
+            SpecificDate = null,
+            Date = null,
+            Time = null
+        };
+
+        // Document that should match via GUID condition AND Age < 18
+        var matchingDoc2 = new TestDocument
+        {
+            Id = Guid.Parse("aa648248-cb69-4217-ac95-d7484795afb2"),
+            Title = "something else",
+            Age = 15,  // Changed to satisfy Age < 18
+            Rating = 2.5M,
+            BirthMonth = BirthMonthEnum.February,
+            SpecificDate = null,
+            Date = null,
+            Time = null
+        };
+
+        // Document that should match via Title == "lamb" AND Age < 18
+        var matchingDoc3 = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = "lamb",
+            Age = 15,  // Changed to satisfy Age < 18
+            Rating = 2.5M,
+            BirthMonth = BirthMonthEnum.February,
+            SpecificDate = null,
+            Date = null,
+            Time = null
+        };
+
+        // Document that should match via Title == null AND Age < 18
+        var matchingDoc4 = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = null,
+            Age = 15,
+            Rating = 2.5M,
+            BirthMonth = BirthMonthEnum.February,
+            SpecificDate = null,
+            Date = null,
+            Time = null
+        };
+
+        // Document that should match via Title contains "waffle & chicken" AND Age > 30 AND BirthMonth == January AND Title starts with "ally"
+        var matchingDoc6 = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = "ally smith with waffle & chicken",  // Now matches both Title _= "ally" and Title @=* "waffle & chicken"
+            Age = 35,  // Now matches Age > 30
+            Rating = 2.5M,
+            BirthMonth = BirthMonthEnum.January,
+            SpecificDate = null,
+            Date = null,
+            Time = null
+        };
+
+        // Document that should match via dates
+        var matchingDoc8 = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = "something else",
+            Age = 25,
+            Rating = 2.5M,
+            BirthMonth = BirthMonthEnum.February,
+            SpecificDate = specificDateTime,
+            Date = specificDate,
+            Time = null
+        };
+
+        // Document that should match via dates (time condition)
+        var matchingDoc9 = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = "something else",
+            Age = 25,
+            Rating = 2.5M,
+            BirthMonth = BirthMonthEnum.February,
+            SpecificDate = specificDateTime,
+            Date = null,
+            Time = specificTime
+        };
+
+        // Document that should not match any conditions
+        var nonMatchingDoc = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = "no match",
+            Age = 25,
+            Rating = 2.5M,
+            BirthMonth = BirthMonthEnum.February,
+            SpecificDate = DateTimeOffset.Now,
+            Date = DateOnly.FromDateTime(DateTime.Now),
+            Time = TimeOnly.FromDateTime(DateTime.Now)
+        };
+
+        Session.Store(matchingDoc1, matchingDoc2, matchingDoc3, matchingDoc4,
+            matchingDoc6, matchingDoc8, matchingDoc9, nonMatchingDoc);
+        await Session.SaveChangesAsync();
+
+        var input = """((Title @=* "waffle & chicken" && Age > 30) || Id == "aa648248-cb69-4217-ac95-d7484795afb2" || Title == "lamb" || Title == null) && (Age < 18 || (BirthMonth == January && Title _= "ally")) || Rating > 3.5 || SpecificDate == 2022-07-01T00:00:03Z && (Date == 2022-07-01 || Time == 00:00:03)""";
+
+        // Act
+        var queryable = Session.Query<TestDocument>();
+        var appliedQueryable = queryable.ApplyQueryKitFilter(input);
+        var results = appliedQueryable.ToList();
+
+        // Assert
+        results.Should().Contain(x => x.Id == matchingDoc1.Id);
+        results.Should().Contain(x => x.Id == matchingDoc2.Id);
+        results.Should().Contain(x => x.Id == matchingDoc3.Id);
+        results.Should().Contain(x => x.Id == matchingDoc4.Id);
+        results.Should().Contain(x => x.Id == matchingDoc6.Id);
+        results.Should().Contain(x => x.Id == matchingDoc8.Id);
+        results.Should().Contain(x => x.Id == matchingDoc9.Id);
+        results.Should().NotContain(x => x.Id == nonMatchingDoc.Id);
+
+        // Verify specific matching conditions
+        var doc1 = results.FirstOrDefault(x => x.Id == matchingDoc1.Id);
+        doc1.Should().NotBeNull("matches Rating > 3.5");
+
+        var doc2 = results.FirstOrDefault(x => x.Id == matchingDoc2.Id);
+        doc2.Should().NotBeNull("matches specific GUID AND Age < 18");
+
+        var doc3 = results.FirstOrDefault(x => x.Id == matchingDoc3.Id);
+        doc3.Should().NotBeNull("matches Title == lamb AND Age < 18");
+
+        var doc4 = results.FirstOrDefault(x => x.Id == matchingDoc4.Id);
+        doc4.Should().NotBeNull("matches 'Title is null' AND 'Age < 18'");
+
+        var doc6 = results.FirstOrDefault(x => x.Id == matchingDoc6.Id);
+        doc6.Should().NotBeNull("matches 'Title contains waffle & chicken AND Age > 30' AND 'BirthMonth == January AND Title starts with ally'");
+
+        var doc8 = results.FirstOrDefault(x => x.Id == matchingDoc8.Id);
+        doc8.Should().NotBeNull("matches SpecificDate AND Date conditions");
+
+        var doc9 = results.FirstOrDefault(x => x.Id == matchingDoc9.Id);
+        doc9.Should().NotBeNull("matches SpecificDate AND Time conditions");
+
+        results.FirstOrDefault(x => x.Id == nonMatchingDoc.Id).Should().BeNull("doesn't match any conditions");
+    }
 }
