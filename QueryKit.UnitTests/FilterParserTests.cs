@@ -76,7 +76,7 @@ public class FilterParserTests
         var guid = Guid.NewGuid();
         var input = $"""Id == "{guid}" """;
         var filterExpression = FilterParser.ParseFilter<TestingPerson>(input);
-        filterExpression.ToString().Should().Be($"x => (x.Id.ToString() == \"{guid}\")");
+        filterExpression.ToString().Should().Be($"x => (x.Id == {guid})");
     }
 
     [Fact]
@@ -85,7 +85,7 @@ public class FilterParserTests
         var guid = Guid.NewGuid();
         var input = $"""Id == {guid} """;
         var filterExpression = FilterParser.ParseFilter<TestingPerson>(input);
-        filterExpression.ToString().Should().Be($"x => (x.Id.ToString() == \"{guid}\")");
+        filterExpression.ToString().Should().Be($"x => (x.Id == {guid})");
     }
 
     [Fact]
