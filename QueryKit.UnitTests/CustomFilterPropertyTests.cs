@@ -26,7 +26,7 @@ public class CustomFilterPropertyTests
         var faker = new Faker();
         var value = faker.Lorem.Word();
         var input = $"""state == "{value}" """;
-    
+
         var config = new QueryKitConfiguration(config =>
         {
             config.Property<TestingPerson>(x => x.PhysicalAddress.State).HasQueryName("state");
@@ -34,7 +34,7 @@ public class CustomFilterPropertyTests
         var filterExpression = FilterParser.ParseFilter<TestingPerson>(input, config);
         filterExpression.ToString().Should().Be($"""x => (x.PhysicalAddress.State == "{value}")""");
     }
-    
+
     [Fact(Skip = "Will need something like this if i want to support HasConversion in efcore.")]
     public void can_have_child_prop_name_for_efcore_HasConversion()
     {
@@ -44,14 +44,14 @@ public class CustomFilterPropertyTests
         var filterExpression = FilterParser.ParseFilter<TestingPerson>(input);
         filterExpression.ToString().Should().Be($"""x => (x.Email == "{value}")""");
     }
-    
+
     [Fact(Skip = "Will need something like this if i want to support HasConversion in efcore.")]
     public void can_have_custom_child_prop_name_for_efcore_HasConversion()
     {
         var faker = new Faker();
         var value = faker.Lorem.Word();
         var input = $"""email == "{value}" """;
-    
+
         var config = new QueryKitConfiguration(config =>
         {
             config.Property<TestingPerson>(x => x.Email).HasQueryName("email");
@@ -59,7 +59,7 @@ public class CustomFilterPropertyTests
         var filterExpression = FilterParser.ParseFilter<TestingPerson>(input, config);
         filterExpression.ToString().Should().Be($"""x => (x.Email == "{value}")""");
     }
-    
+
     [Fact]
     public void can_have_custom_prop_name_for_string()
     {
@@ -74,7 +74,7 @@ public class CustomFilterPropertyTests
         var filterExpression = FilterParser.ParseFilter<TestingPerson>(input, config);
         filterExpression.ToString().Should().Be($"""x => (x.Title == "{value}")""");
     }
-    
+
     [Fact]
     public void can_handle_alias_in_value()
     {
@@ -89,7 +89,7 @@ public class CustomFilterPropertyTests
         var filterExpression = FilterParser.ParseFilter<TestingPerson>(input, config);
         filterExpression.ToString().Should().Be($"""x => (x.Title == "{value} with special_value")""");
     }
-    
+
     [Fact]
     public void can_handle_alias_in_value_with_operator_after_it()
     {
@@ -104,7 +104,7 @@ public class CustomFilterPropertyTests
         var filterExpression = FilterParser.ParseFilter<TestingPerson>(input, config);
         filterExpression.ToString().Should().Be($"""x => (x.Title == "{value} with special_value @=* a thing")""");
     }
-    
+
     [Fact]
     public void can_have_custom_prop_name_for_multiple_props()
     {
@@ -119,9 +119,9 @@ public class CustomFilterPropertyTests
             config.Property<TestingPerson>(x => x.Id).HasQueryName("identifier");
         });
         var filterExpression = FilterParser.ParseFilter<TestingPerson>(input, config);
-        filterExpression.ToString().Should().Be($"""x => ((x.Title == "{stringValue}") OrElse (x.Id.ToString() == "{guidValue}"))""");
+        filterExpression.ToString().Should().Be($"""x => ((x.Title == "{stringValue}") OrElse (x.Id == {guidValue}))""");
     }
-    
+
     [Fact]
     public void can_have_custom_prop_name_for_some_props()
     {
@@ -135,9 +135,9 @@ public class CustomFilterPropertyTests
             config.Property<TestingPerson>(x => x.Title).HasQueryName("special_title");
         });
         var filterExpression = FilterParser.ParseFilter<TestingPerson>(input, config);
-        filterExpression.ToString().Should().Be($"""x => ((x.Title == "{stringValue}") OrElse (x.Id.ToString() == "{guidValue}"))""");
+        filterExpression.ToString().Should().Be($"""x => ((x.Title == "{stringValue}") OrElse (x.Id == {guidValue}))""");
     }
-    
+
     [Fact]
     public void can_handle_case_insensitive_custom_props()
     {
@@ -152,7 +152,7 @@ public class CustomFilterPropertyTests
         var filterExpression = FilterParser.ParseFilter<TestingPerson>(input, config);
         filterExpression.ToString().Should().Be($"""x => (x.Title == "{value}")""");
     }
-    
+
     [Fact]
     public void can_have_custom_prop_excluded_from_filter()
     {
@@ -169,7 +169,7 @@ public class CustomFilterPropertyTests
         var filterExpression = FilterParser.ParseFilter<TestingPerson>(input, config);
         filterExpression.ToString().Should().Be($"""x => ((x.Title == "{stringValue}") OrElse (True == True))""");
     }
-    
+
     [Fact]
     public void can_have_custom_prop_excluded_from_filter_with_custom_propname()
     {
@@ -186,7 +186,7 @@ public class CustomFilterPropertyTests
         var filterExpression = FilterParser.ParseFilter<TestingPerson>(input, config);
         filterExpression.ToString().Should().Be($"""x => ((x.Title == "{stringValue}") OrElse (True == True))""");
     }
-    
+
     [Fact]
     public void can_have_custom_prop_work_with_collection_filters()
     {
@@ -202,7 +202,7 @@ public class CustomFilterPropertyTests
         filterExpression.ToString().Should().Be(
             $"""x => ((x.Title == "{stringValue}") AndAlso x.Ingredients.Select(y => y.Name).Any(z => (z == "flour")))""");
     }
-    
+
     [Fact]
     public void can_have_derived_prop_work_with_collection_filters()
     {
@@ -218,7 +218,7 @@ public class CustomFilterPropertyTests
         filterExpression.ToString().Should().Be(
             $"""x => (((x.Title + x.Directions) == "{stringValue}") AndAlso x.Ingredients.Select(y => y.Name).Any(z => (z == "flour")))""");
     }
-    
+
     [Fact]
     public void filter_prevented_props_always_have_true_equals_true_regardless_of_comparison()
     {
@@ -234,7 +234,7 @@ public class CustomFilterPropertyTests
         var filterExpression = FilterParser.ParseFilter<TestingPerson>(input, config);
         filterExpression.ToString().Should().Be($"""x => (True == True)""");
     }
-    
+
     [Fact]
     public void can_throw_error_when_property_has_space()
     {
@@ -251,13 +251,13 @@ public class CustomFilterPropertyTests
         act.Should().Throw<UnknownFilterPropertyException>()
             .WithMessage($"The filter property '{firstWord}' was not recognized.");
     }
-    
+
     [Fact]
     public void can_handle_nonexistent_property()
     {
         var faker = new Faker();
         var input = $"""{faker.Lorem.Word()} == 25""";
-        
+
         var config = new QueryKitConfiguration(config =>
         {
             config.AllowUnknownProperties = true;
