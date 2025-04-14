@@ -19,6 +19,9 @@ jobs:
         run: dotnet restore
       - name: Build
         run: dotnet build --configuration Release --no-restore
-      - name: Test
+      - name: Run Integration Tests
         working-directory: QueryKit.IntegrationTests
+        run: dotnet test --no-restore --verbosity minimal
+      - name: Run Marten Tests
+        working-directory: QueryKit.MartenTests
         run: dotnet test --no-restore --verbosity minimal
