@@ -707,11 +707,12 @@ public abstract class ComparisonOperator : SmartEnum<ComparisonOperator>
         public override bool IsCountOperator() => false; 
         public override Expression GetExpression<T>(Expression left, Expression right, Type? dbContextType)
         {
-            if (left.Type.IsGenericType && 
+            if ((left.Type.IsGenericType && 
                 (left.Type.GetGenericTypeDefinition() == typeof(List<>) || 
                  left.Type.GetGenericTypeDefinition() == typeof(ICollection<>) ||
                  left.Type.GetGenericTypeDefinition() == typeof(IList<>) ||
                  typeof(IEnumerable<>).IsAssignableFrom(left.Type.GetGenericTypeDefinition())))
+                || left.Type.IsArray)
             {
                 return GetCollectionExpression(left, right, Expression.Equal, UsesAll);
             }
@@ -730,11 +731,12 @@ public abstract class ComparisonOperator : SmartEnum<ComparisonOperator>
         public override bool IsCountOperator() => false; 
         public override Expression GetExpression<T>(Expression left, Expression right, Type? dbContextType)
         {
-            if (left.Type.IsGenericType && 
+            if ((left.Type.IsGenericType && 
                 (left.Type.GetGenericTypeDefinition() == typeof(List<>) || 
                  left.Type.GetGenericTypeDefinition() == typeof(ICollection<>) ||
                  left.Type.GetGenericTypeDefinition() == typeof(IList<>) ||
                  typeof(IEnumerable<>).IsAssignableFrom(left.Type.GetGenericTypeDefinition())))
+                || left.Type.IsArray)
             {
                 return GetCollectionExpression(left, right, Expression.NotEqual, UsesAll);
             }
@@ -918,7 +920,37 @@ public abstract class ComparisonOperator : SmartEnum<ComparisonOperator>
     
     private Expression GetCollectionExpression(Expression left, Expression right, Func<Expression, Expression, Expression> comparisonFunction, bool usesAll)
     {
-        var xParameter = Expression.Parameter(left.Type.GetGenericArguments()[0], "z");
+        Type elementType;
+        if (left.Type.IsArray)
+        {
+            elementType = left.Type.GetElementType();
+        }
+        else if (left.Type.IsGenericType)
+        {
+            elementType = left.Type.GetGenericArguments()[0];
+        }
+        else
+        {
+            throw new QueryKitParsingException("Left expression is not a collection type");
+        }
+        
+        // Convert right value to correct type BEFORE creating the lambda
+        if (right is ConstantExpression constExpr && constExpr.Type == typeof(string) &&
+            (elementType == typeof(Guid) || elementType == typeof(Guid?)))
+        {
+            var strVal = (string)constExpr.Value;
+            if (Guid.TryParse(strVal.Trim('"'), out var guidVal))
+            {
+                object val = elementType == typeof(Guid?) ? (Guid?)guidVal : guidVal;
+                right = Expression.Constant(val, elementType);
+            }
+            else
+            {
+                throw new QueryKitParsingException($"Could not parse '{strVal}' as Guid for collection comparison");
+            }
+        }
+        
+        var xParameter = Expression.Parameter(elementType, "z");
         Expression body;
 
         if (CaseInsensitive && xParameter.Type == typeof(string) && right.Type == typeof(string))
@@ -937,9 +969,17 @@ public abstract class ComparisonOperator : SmartEnum<ComparisonOperator>
         var anyMethod = typeof(Enumerable)
             .GetMethods()
             .Single(m => m.Name == (usesAll ? "All" : "Any") && m.GetParameters().Length == 2)
-            .MakeGenericMethod(left.Type.GetGenericArguments()[0]);
+            .MakeGenericMethod(elementType);
 
-        return Expression.Call(anyMethod, left, anyLambda);
+        // If left is array, convert to IEnumerable<T>
+        Expression leftEnumerable = left;
+        if (left.Type.IsArray)
+        {
+            var asEnumerableMethod = typeof(Enumerable).GetMethod("AsEnumerable").MakeGenericMethod(elementType);
+            leftEnumerable = Expression.Call(asEnumerableMethod, left);
+        }
+
+        return Expression.Call(anyMethod, leftEnumerable, anyLambda);
     }
     
     private Expression GetCollectionExpression(Expression left, Expression right, string methodName, bool negate, bool usesAll)
