@@ -5,6 +5,8 @@ public class TestDocument
     public Guid Id { get; set; }
     public string Title { get; set; }
     public Guid? RelatedId { get; set; }
+    public Guid[] AdditionalIds { get; set; } = [];
+    public Guid[]? NullableAdditionalIds { get; set; }
     public decimal Rating { get; set; }
     public int Age { get; set; }
     public BirthMonthEnum BirthMonth { get; set; }

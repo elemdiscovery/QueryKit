@@ -109,7 +109,7 @@ public class MartenGuidFilteringTests : TestBase
         results[0].Id.Should().Be(doc2.Id);
     }
 
-    [Fact]
+    [Fact(Skip = "Marten does not support ToString() on Guid")]
     public async Task can_filter_by_guid_contains()
     {
         // Arrange
@@ -180,6 +180,138 @@ public class MartenGuidFilteringTests : TestBase
         results.Should().Contain(x => x.Id == doc1.Id);
         results.Should().NotContain(x => x.Id == doc2.Id);
         results.Should().Contain(x => x.Id == doc3.Id);
+    }
+
+    [Fact]
+    public async Task can_filter_by_additionalids_has_operator()
+    {
+        // Arrange
+        var guidToFind = Guid.NewGuid();
+        var docWithGuid = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = "Has Guid",
+            AdditionalIds = new[] { guidToFind, Guid.NewGuid() }
+        };
+        var docWithoutGuid = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = "No Guid",
+            AdditionalIds = new[] { Guid.NewGuid(), Guid.NewGuid() }
+        };
+
+        Session.Store(docWithGuid, docWithoutGuid);
+        await Session.SaveChangesAsync();
+
+        var input = $"""AdditionalIds ^$ {guidToFind} """;
+
+        // Act
+        var queryable = Session.Query<TestDocument>();
+        var appliedQueryable = queryable.ApplyQueryKitFilter(input);
+        var results = appliedQueryable.ToList();
+
+        // Assert
+        results.Count.Should().Be(1);
+        results[0].Id.Should().Be(docWithGuid.Id);
+    }
+
+    [Fact]
+    public async Task can_filter_by_additionalids_does_not_have_operator()
+    {
+        // Arrange
+        var guidToExclude = Guid.NewGuid();
+        var docWithGuid = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = "Has Guid",
+            AdditionalIds = new[] { guidToExclude, Guid.NewGuid() }
+        };
+        var docWithoutGuid = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = "No Guid",
+            AdditionalIds = new[] { Guid.NewGuid(), Guid.NewGuid() }
+        };
+
+        Session.Store(docWithGuid, docWithoutGuid);
+        await Session.SaveChangesAsync();
+
+        var input = $"""AdditionalIds !^$ "{guidToExclude}" """;
+
+        // Act
+        var queryable = Session.Query<TestDocument>();
+        var appliedQueryable = queryable.ApplyQueryKitFilter(input);
+        var results = appliedQueryable.ToList();
+
+        // Assert
+        results.Count.Should().Be(1);
+        results[0].Id.Should().Be(docWithoutGuid.Id);
+    }
+
+    [Fact]
+    public async Task can_filter_by_nullableadditionalids_has_operator()
+    {
+        // Arrange
+        var guidToFind = Guid.NewGuid();
+        var docWithGuid = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = "Has Guid",
+            NullableAdditionalIds = new[] { guidToFind, Guid.NewGuid() }
+        };
+        var docWithoutGuid = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = "No Guid",
+            NullableAdditionalIds = new[] { Guid.NewGuid(), Guid.NewGuid() }
+        };
+
+        Session.Store(docWithGuid, docWithoutGuid);
+        await Session.SaveChangesAsync();
+
+        var input = $"""NullableAdditionalIds ^$ {guidToFind} """;
+
+        // Act
+        var queryable = Session.Query<TestDocument>();
+        var appliedQueryable = queryable.ApplyQueryKitFilter(input);
+        var results = appliedQueryable.ToList();
+
+        // Assert
+        results.Count.Should().Be(1);
+        results[0].Id.Should().Be(docWithGuid.Id);
+    }
+
+    [Fact]
+    public async Task can_filter_by_nullableadditionalids_does_not_have_operator()
+    {
+        // Arrange
+        var guidToExclude = Guid.NewGuid();
+        var docWithGuid = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = "Has Guid",
+            NullableAdditionalIds = new[] { guidToExclude, Guid.NewGuid() }
+        };
+        var docWithoutGuid = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = "No Guid",
+            NullableAdditionalIds = new[] { Guid.NewGuid(), Guid.NewGuid() }
+        };
+
+        Session.Store(docWithGuid, docWithoutGuid);
+        await Session.SaveChangesAsync();
+
+        var input = $"""NullableAdditionalIds !^$ "{guidToExclude}" """;
+
+        // Act
+        var queryable = Session.Query<TestDocument>();
+        var appliedQueryable = queryable.ApplyQueryKitFilter(input);
+        var results = appliedQueryable.ToList();
+
+        // Assert
+        results.Count.Should().Be(1);
+        results[0].Id.Should().Be(docWithoutGuid.Id);
     }
 
     [Fact]
