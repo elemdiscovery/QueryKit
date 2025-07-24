@@ -474,6 +474,58 @@ public class MartenGuidFilteringTests : TestBase
     }
 
     [Fact]
+    public async Task can_filter_by_name_and_additionalids_with_or_on_guid_array()
+    {
+        // Arrange
+        var testPrefix = "prefix-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+        var id1 = Guid.NewGuid();
+        var id2 = Guid.NewGuid();
+        var id3 = Guid.NewGuid();
+        var id4 = Guid.NewGuid();
+
+        var doc1 = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = testPrefix + "-one",
+            AdditionalIds = new[] { id1, id2 }
+        };
+        var doc2 = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = testPrefix + "-two",
+            AdditionalIds = new[] { id3 }
+        };
+        var doc3 = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = testPrefix + "-three",
+            AdditionalIds = new[] { id4 }
+        };
+        var doc4 = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = "other-title",
+            AdditionalIds = new[] { id2, id3 }
+        };
+
+        Session.Store(doc1, doc2, doc3, doc4);
+        await Session.SaveChangesAsync();
+
+        var input = $"""Title @= "{testPrefix}" && (AdditionalIds ^$ {id2} || AdditionalIds ^$ "{id3}")""";
+
+        // Act
+        var queryable = Session.Query<TestDocument>();
+        var appliedQueryable = queryable.ApplyQueryKitFilter(input);
+        var results = appliedQueryable.ToList();
+
+        // Assert
+        results.Should().ContainSingle(x => x.Id == doc1.Id);
+        results.Should().ContainSingle(x => x.Id == doc2.Id);
+        results.Should().NotContain(x => x.Id == doc3.Id);
+        results.Should().NotContain(x => x.Id == doc4.Id);
+    }
+
+    [Fact]
     public async Task should_handle_malformed_guid_gracefully()
     {
         // Arrange
