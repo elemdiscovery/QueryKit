@@ -518,5 +518,312 @@ public class MartenNestedFilteringTests : TestBase
         results.Should().NotContain(x => x.Id == doc2.Id);
         results.Should().NotContain(x => x.Id == doc4.Id);
     }
+
+    [Fact]
+    public async Task can_filter_by_nested_object_property_name()
+    {
+        // Arrange
+        var faker = new Faker();
+        var docWithNestedItem = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = faker.Lorem.Sentence(),
+            SingleNestItem = new NestedItem { Name = "TestItem", Value = 10 }
+        };
+        var docWithDifferentName = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = faker.Lorem.Sentence(),
+            SingleNestItem = new NestedItem { Name = "OtherItem", Value = 20 }
+        };
+        var docWithNullNestedItem = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = faker.Lorem.Sentence(),
+            SingleNestItem = null
+        };
+
+        Session.Store(docWithNestedItem, docWithDifferentName, docWithNullNestedItem);
+        await Session.SaveChangesAsync();
+
+        var input = """SingleNestItem.Name == "TestItem" """;
+
+        // Act
+        var queryable = Session.Query<TestDocument>();
+        var appliedQueryable = queryable.ApplyQueryKitFilter(input);
+        var results = appliedQueryable.ToList();
+
+        // Assert
+        results.Count.Should().Be(1);
+        results[0].Id.Should().Be(docWithNestedItem.Id);
+    }
+
+    [Fact]
+    public async Task can_filter_by_nested_object_property_value()
+    {
+        // Arrange
+        var faker = new Faker();
+        var docWithValue10 = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = faker.Lorem.Sentence(),
+            SingleNestItem = new NestedItem { Name = "Item1", Value = 10 }
+        };
+        var docWithValue20 = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = faker.Lorem.Sentence(),
+            SingleNestItem = new NestedItem { Name = "Item2", Value = 20 }
+        };
+        var docWithValue30 = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = faker.Lorem.Sentence(),
+            SingleNestItem = new NestedItem { Name = "Item3", Value = 30 }
+        };
+        var docWithNullNestedItem = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = faker.Lorem.Sentence(),
+            SingleNestItem = null
+        };
+
+        Session.Store(docWithValue10, docWithValue20, docWithValue30, docWithNullNestedItem);
+        await Session.SaveChangesAsync();
+
+        var input = """SingleNestItem.Value > 15""";
+
+        // Act
+        var queryable = Session.Query<TestDocument>();
+        var appliedQueryable = queryable.ApplyQueryKitFilter(input);
+        var results = appliedQueryable.ToList();
+
+        // Assert
+        results.Count.Should().Be(2);
+        results.Should().Contain(x => x.Id == docWithValue20.Id);
+        results.Should().Contain(x => x.Id == docWithValue30.Id);
+        results.Should().NotContain(x => x.Id == docWithValue10.Id);
+        results.Should().NotContain(x => x.Id == docWithNullNestedItem.Id);
+    }
+
+    [Fact]
+    public async Task can_filter_by_nested_object_property_when_null()
+    {
+        // Arrange
+        var faker = new Faker();
+        var docWithNestedItem = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = faker.Lorem.Sentence(),
+            SingleNestItem = new NestedItem { Name = "TestItem", Value = 10 }
+        };
+        var docWithNullNestedItem = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = faker.Lorem.Sentence(),
+            SingleNestItem = null
+        };
+
+        Session.Store(docWithNestedItem, docWithNullNestedItem);
+        await Session.SaveChangesAsync();
+
+        var input = """SingleNestItem == null""";
+
+        // Act
+        var queryable = Session.Query<TestDocument>();
+        var appliedQueryable = queryable.ApplyQueryKitFilter(input);
+        var results = appliedQueryable.ToList();
+
+        // Assert
+        results.Count.Should().Be(1);
+        results[0].Id.Should().Be(docWithNullNestedItem.Id);
+    }
+
+    [Fact]
+    public async Task can_filter_by_nested_object_property_name_with_contains()
+    {
+        // Arrange
+        var faker = new Faker();
+        var docWithMatchingName = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = faker.Lorem.Sentence(),
+            SingleNestItem = new NestedItem { Name = "TestItem123", Value = 10 }
+        };
+        var docWithNonMatchingName = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = faker.Lorem.Sentence(),
+            SingleNestItem = new NestedItem { Name = "OtherItem", Value = 20 }
+        };
+        var docWithNullNestedItem = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = faker.Lorem.Sentence(),
+            SingleNestItem = null
+        };
+
+        Session.Store(docWithMatchingName, docWithNonMatchingName, docWithNullNestedItem);
+        await Session.SaveChangesAsync();
+
+        var input = """SingleNestItem.Name @= "Test" """;
+
+        // Act
+        var queryable = Session.Query<TestDocument>();
+        var appliedQueryable = queryable.ApplyQueryKitFilter(input);
+        var results = appliedQueryable.ToList();
+
+        // Assert
+        results.Count.Should().Be(1);
+        results[0].Id.Should().Be(docWithMatchingName.Id);
+    }
+
+    [Fact]
+    public async Task can_filter_with_complex_nested_object_conditions()
+    {
+        // Arrange
+        var faker = new Faker();
+        var doc1 = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = "Doc1",
+            SingleNestItem = new NestedItem { Name = "Item1", Value = 10 },
+            Age = 25
+        };
+        var doc2 = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = "Doc2",
+            SingleNestItem = new NestedItem { Name = "Item2", Value = 20 },
+            Age = 30
+        };
+        var doc3 = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = "Doc3",
+            SingleNestItem = new NestedItem { Name = "Item1", Value = 30 },
+            Age = 25
+        };
+        var doc4 = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = "Doc4",
+            SingleNestItem = null,
+            Age = 25
+        };
+
+        Session.Store(doc1, doc2, doc3, doc4);
+        await Session.SaveChangesAsync();
+
+        var input = """SingleNestItem.Name == "Item1" && SingleNestItem.Value > 15""";
+
+        // Act
+        var queryable = Session.Query<TestDocument>();
+        var appliedQueryable = queryable.ApplyQueryKitFilter(input);
+        var results = appliedQueryable.ToList();
+
+        // Assert
+        results.Count.Should().Be(1);
+        results[0].Id.Should().Be(doc3.Id);
+        results.Should().NotContain(x => x.Id == doc1.Id); // Name matches but Value is 10, not > 15
+        results.Should().NotContain(x => x.Id == doc2.Id); // Value > 15 but Name doesn't match
+        results.Should().NotContain(x => x.Id == doc4.Id); // SingleNestItem is null
+    }
+
+    [Fact]
+    public async Task can_filter_by_nested_object_property_name_not_null()
+    {
+        // Arrange
+        var faker = new Faker();
+        var docWithName = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = faker.Lorem.Sentence(),
+            SingleNestItem = new NestedItem { Name = "TestItem", Value = 10 }
+        };
+        var docWithNullName = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = faker.Lorem.Sentence(),
+            SingleNestItem = new NestedItem { Name = null, Value = 20 }
+        };
+        var docWithEmptyName = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = faker.Lorem.Sentence(),
+            SingleNestItem = new NestedItem { Name = "", Value = 30 }
+        };
+        var docWithNullNestedItem = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = faker.Lorem.Sentence(),
+            SingleNestItem = null
+        };
+
+        Session.Store(docWithName, docWithNullName, docWithEmptyName, docWithNullNestedItem);
+        await Session.SaveChangesAsync();
+
+        var input = """SingleNestItem.Name != null""";
+
+        // Act
+        var queryable = Session.Query<TestDocument>();
+        var appliedQueryable = queryable.ApplyQueryKitFilter(input);
+        var results = appliedQueryable.ToList();
+
+        // Assert
+        results.Count.Should().Be(2); // docWithName and docWithEmptyName (empty string is not null)
+        results.Should().Contain(x => x.Id == docWithName.Id);
+        results.Should().Contain(x => x.Id == docWithEmptyName.Id);
+        results.Should().NotContain(x => x.Id == docWithNullName.Id);
+        results.Should().NotContain(x => x.Id == docWithNullNestedItem.Id);
+    }
+
+    [Fact]
+    public async Task can_filter_by_nested_object_property_name_not_empty()
+    {
+        // Arrange
+        var faker = new Faker();
+        var docWithName = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = faker.Lorem.Sentence(),
+            SingleNestItem = new NestedItem { Name = "TestItem", Value = 10 }
+        };
+        var docWithNullName = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = faker.Lorem.Sentence(),
+            SingleNestItem = new NestedItem { Name = null, Value = 20 }
+        };
+        var docWithEmptyName = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = faker.Lorem.Sentence(),
+            SingleNestItem = new NestedItem { Name = "", Value = 30 }
+        };
+        var docWithNullNestedItem = new TestDocument
+        {
+            Id = Guid.NewGuid(),
+            Title = faker.Lorem.Sentence(),
+            SingleNestItem = null
+        };
+
+        Session.Store(docWithName, docWithNullName, docWithEmptyName, docWithNullNestedItem);
+        await Session.SaveChangesAsync();
+
+        var input = """SingleNestItem.Name != "" """;
+
+        // Act
+        var queryable = Session.Query<TestDocument>();
+        var appliedQueryable = queryable.ApplyQueryKitFilter(input);
+        var results = appliedQueryable.ToList();
+
+        // Assert
+        results.Count.Should().Be(1); // Only docWithName has a non-empty name
+        results.Should().Contain(x => x.Id == docWithName.Id);
+        results.Should().NotContain(x => x.Id == docWithNullName.Id);
+        results.Should().NotContain(x => x.Id == docWithEmptyName.Id);
+        results.Should().NotContain(x => x.Id == docWithNullNestedItem.Id);
+    }
 }
 
