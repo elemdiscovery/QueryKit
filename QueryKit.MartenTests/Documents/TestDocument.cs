@@ -7,12 +7,22 @@ public class TestDocument
     public Guid? RelatedId { get; set; }
     public Guid[] AdditionalIds { get; set; } = [];
     public Guid[]? NullableAdditionalIds { get; set; }
+    public string[] Tags { get; set; } = [];
+    public string[]? NullableTags { get; set; }
+    public List<NestedItem> Items { get; set; } = [];
+    public List<NestedItem>? NullableItems { get; set; }
     public decimal Rating { get; set; }
     public int Age { get; set; }
     public BirthMonthEnum BirthMonth { get; set; }
     public DateTimeOffset? SpecificDate { get; set; }
     public DateOnly? Date { get; set; }
     public TimeOnly? Time { get; set; }
+}
+
+public class NestedItem
+{
+    public string? Name { get; set; }
+    public int Value { get; set; }
 }
 
 public enum BirthMonthEnum

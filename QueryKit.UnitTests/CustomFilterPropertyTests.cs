@@ -121,7 +121,7 @@ public class CustomFilterPropertyTests
         var filterExpression = FilterParser.ParseFilter<TestingPerson>(input, config);
         filterExpression.ToString().Should().Be($"""x => ((x.Title == "{stringValue}") OrElse (x.Id == {guidValue}))""");
     }
-    
+
     [Fact]
     public void can_have_custom_prop_name_for_some_props()
     {

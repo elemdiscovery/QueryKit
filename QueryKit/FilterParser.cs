@@ -222,11 +222,55 @@ public static class FilterParser
         { typeof(sbyte), value => sbyte.Parse(value, CultureInfo.InvariantCulture) },
     };
 
-    private static Expression CreateRightExpr(Expression leftExpr, string right, ComparisonOperator op, 
+    private static Expression CreateRightExpr(Expression leftExpr, string right, ComparisonOperator op,
         IQueryKitConfiguration? config = null, string? propertyPath = null)
     {
         var targetType = leftExpr.Type;
-        
+
+        // Handle expressions with Object type - check for ConditionalExpression inside Convert/Unary
+        if (targetType == typeof(object))
+        {
+            var innerExpr = leftExpr;
+
+            // Unwrap Convert/Unary expressions
+            while (innerExpr is UnaryExpression unaryExpr && unaryExpr.NodeType == ExpressionType.Convert)
+            {
+                innerExpr = unaryExpr.Operand;
+            }
+
+            if (innerExpr is ConditionalExpression conditionalExpr)
+            {
+                // For conditional expressions, use the type of the branches
+                // Prefer nullable types if one branch is nullable
+                var trueType = conditionalExpr.IfTrue.Type;
+                var falseType = conditionalExpr.IfFalse.Type;
+
+                if (trueType == falseType)
+                {
+                    targetType = trueType;
+                }
+                else if (Nullable.GetUnderlyingType(trueType) != null || Nullable.GetUnderlyingType(falseType) != null)
+                {
+                    // One is nullable, use the nullable version
+                    var underlyingTrue = Nullable.GetUnderlyingType(trueType) ?? trueType;
+                    var underlyingFalse = Nullable.GetUnderlyingType(falseType) ?? falseType;
+
+                    if (underlyingTrue == underlyingFalse)
+                    {
+                        targetType = typeof(Nullable<>).MakeGenericType(underlyingTrue);
+                    }
+                }
+                else if (trueType.IsAssignableFrom(falseType))
+                {
+                    targetType = trueType;
+                }
+                else if (falseType.IsAssignableFrom(trueType))
+                {
+                    targetType = falseType;
+                }
+            }
+        }
+
         // Check if this property uses HasConversion
         if (config?.PropertyMappings != null && !string.IsNullOrEmpty(propertyPath))
         {
@@ -292,7 +336,12 @@ public static class FilterParser
             
             if (right.StartsWith("[") && right.EndsWith("]"))
             {
-                targetType = targetType == typeof(Guid) || targetType == typeof(Guid?) ? typeof(string) : targetType;
+                // Only convert GUID arrays to string arrays for string operators (Contains, etc.)
+                // For other operators like 'in', keep as GUID array for proper type matching
+                if ((targetType == typeof(Guid) || targetType == typeof(Guid?)) && op.IsStringComparisonOperator())
+                {
+                    targetType = typeof(string);
+                }
                 var values = right.Trim('[', ']').Split(',').Select(x => x.Trim()).ToList();
                 var elementType = targetType.IsArray ? targetType.GetElementType() : targetType;
             
@@ -397,7 +446,16 @@ public static class FilterParser
 
             if (targetType == typeof(Guid))
             {
-                return Expression.Constant(right, typeof(string)); 
+                // For string operators (Contains, StartsWith, EndsWith), we need to compare as strings
+                // For equality/comparison operators, we can compare GUIDs directly (more efficient and EF-friendly)
+                if (op.IsStringComparisonOperator())
+                {
+                    return Expression.Constant(right, typeof(string));
+                }
+
+                // Parse the GUID for direct comparison
+                var guidValue = Guid.Parse(right);
+                return Expression.Constant(guidValue, typeof(Guid));
             }
 
             var convertedValue = conversionFunction(right);
@@ -591,6 +649,7 @@ public static class FilterParser
                     if (rightPropertyExpr != null)
                     {
                         // Handle GUID conversion for property-to-property comparisons
+                        // Only convert to string for string operators
                         var leftExpr = temp.leftExpr;
                         if (leftExpr.Type == typeof(Guid) || leftExpr.Type == typeof(Guid?))
                         {
@@ -600,7 +659,7 @@ public static class FilterParser
                         {
                             rightPropertyExpr = HandleGuidConversion(rightPropertyExpr, rightPropertyExpr.Type, null, config);
                         }
-                        
+
                         // Ensure compatible types for property-to-property comparison
                         var (leftCompatible, rightCompatible) = EnsureCompatibleTypes(leftExpr, rightPropertyExpr);
                         return temp.op.GetExpression<T>(leftCompatible, rightCompatible, config?.DbContextType);
@@ -614,16 +673,82 @@ public static class FilterParser
                     propertyPath = GetPropertyPath(memberExpr, parameter);
                 }
                 
-                var rightExpr = CreateRightExpr(temp.leftExpr, temp.right, temp.op, config, propertyPath);
+                var leftExprForComparison = temp.leftExpr;
+                // If the left expression is a conditional with Object type, convert it to the proper type
+                if (leftExprForComparison.Type == typeof(object))
+                {
+                    var innerExpr = leftExprForComparison;
+                    
+                    // Unwrap Convert/Unary expressions
+                    while (innerExpr is UnaryExpression unaryExpr && unaryExpr.NodeType == ExpressionType.Convert)
+                    {
+                        innerExpr = unaryExpr.Operand;
+                    }
+                    
+                    if (innerExpr is ConditionalExpression conditionalExpr)
+                    {
+                        // Determine the actual type
+                        var trueType = conditionalExpr.IfTrue.Type;
+                        var falseType = conditionalExpr.IfFalse.Type;
+                        Type actualType = typeof(object);
+                        
+                        if (trueType == falseType)
+                        {
+                            actualType = trueType;
+                        }
+                        else if (Nullable.GetUnderlyingType(trueType) != null || Nullable.GetUnderlyingType(falseType) != null)
+                        {
+                            var underlyingTrue = Nullable.GetUnderlyingType(trueType) ?? trueType;
+                            var underlyingFalse = Nullable.GetUnderlyingType(falseType) ?? falseType;
+                            if (underlyingTrue == underlyingFalse)
+                            {
+                                actualType = typeof(Nullable<>).MakeGenericType(underlyingTrue);
+                            }
+                        }
+                        else if (trueType.IsAssignableFrom(falseType))
+                        {
+                            actualType = trueType;
+                        }
+                        else if (falseType.IsAssignableFrom(trueType))
+                        {
+                            actualType = falseType;
+                        }
+                        
+                        // If we found a better type, recreate the conditional with the correct type
+                        if (actualType != typeof(object) && actualType != null)
+                        {
+                            var newIfTrue = conditionalExpr.IfTrue;
+                            var newIfFalse = conditionalExpr.IfFalse;
+                            
+                            // Convert branches to the target type if needed
+                            if (newIfTrue.Type != actualType)
+                            {
+                                newIfTrue = Expression.Convert(newIfTrue, actualType);
+                            }
+                            if (newIfFalse.Type != actualType)
+                            {
+                                newIfFalse = Expression.Convert(newIfFalse, actualType);
+                            }
+                            
+                            leftExprForComparison = Expression.Condition(
+                                conditionalExpr.Test,
+                                newIfTrue,
+                                newIfFalse,
+                                actualType);
+                        }
+                    }
+                }
+                
+                var rightExpr = CreateRightExpr(leftExprForComparison, temp.right, temp.op, config, propertyPath);
                 
                 // Handle nested collection filtering
-                if (temp.leftExpr is MethodCallExpression methodCall && IsNestedCollectionExpression(methodCall))
+                if (leftExprForComparison is MethodCallExpression methodCall && IsNestedCollectionExpression(methodCall))
                 {
                     return CreateNestedCollectionFilterExpression<T>(methodCall, rightExpr, temp.op);
                 }
                 
                 
-                return temp.op.GetExpression<T>(temp.leftExpr, rightExpr, config?.DbContextType);
+                return temp.op.GetExpression<T>(leftExprForComparison, rightExpr, config?.DbContextType);
             });
 
         return arithmeticComparison.Or(regularComparison);

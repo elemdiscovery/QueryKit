@@ -93,8 +93,6 @@ public class FilterParserTests
     {
         var input = $"""SecondaryId == null """;
         var filterExpression = FilterParser.ParseFilter<Recipe>(input);
-        // filterExpression.ToString().Should().Be($"x => (IIF(x.SecondaryId.HasValue, x.SecondaryId.Value), null) == null)");
-        // This seems to be correct per the integration tests.
         filterExpression.ToString().Should().Be($"x => (x.SecondaryId == null)");
     }
 
