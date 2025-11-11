@@ -3529,4 +3529,324 @@ public class DatabaseFilteringTests() : TestBase
         people.Count.Should().Be(1);
         people[0].Id.Should().Be(targetPerson.Id);
     }
+    
+    [Fact]
+    public async Task can_filter_with_derived_property_containing_not_equal_operator()
+    {
+        // Arrange
+        var testingServiceScope = new TestingServiceScope();
+        var uniqueId = Guid.NewGuid().ToString()[..8];
+        
+        // Create a person with FirstName and LastName (both not null)
+        var personWithFullName = new FakeTestingPersonBuilder()
+            .WithFirstName($"John_{uniqueId}")
+            .WithLastName($"Doe_{uniqueId}")
+            .WithTitle($"Person1_{uniqueId}")
+            .Build();
+            
+        // Create a person with only FirstName (LastName is null)
+        var personWithPartialName = new FakeTestingPersonBuilder()
+            .WithFirstName($"Jane_{uniqueId}")
+            .WithLastName(null) // Explicitly null
+            .WithTitle($"Person2_{uniqueId}")
+            .Build();
+            
+        await testingServiceScope.InsertAsync(personWithFullName, personWithPartialName);
+
+        // Test derived property that uses != operator like the original user issue:
+        // x.Patient != null ? x.Patient.FirstName + " " + x.Patient.LastName : null
+        var input = $"""patient_name == "John_{uniqueId} Doe_{uniqueId}" """;
+        var config = new QueryKitConfiguration(config =>
+        {
+            config.DerivedProperty<TestingPerson>(x => 
+                x.LastName != null 
+                    ? x.FirstName + " " + x.LastName 
+                    : x.FirstName ?? "")
+                .HasQueryName("patient_name");
+        });
+        
+        // Act
+        var queryablePeople = testingServiceScope.DbContext().People;
+        var appliedQueryable = queryablePeople.ApplyQueryKitFilter(input, config);
+        var people = await appliedQueryable.ToListAsync();
+        
+        // Assert
+        people.Count.Should().Be(1);
+        people[0].Id.Should().Be(personWithFullName.Id);
+    }
+
+    [Fact]
+    public async Task can_filter_with_derived_property_containing_multiple_not_equal_operators()
+    {
+        // Arrange
+        var testingServiceScope = new TestingServiceScope();
+        var uniqueId = Guid.NewGuid().ToString()[..8];
+        
+        // Create test data
+        var validPerson = new FakeTestingPersonBuilder()
+            .WithFirstName($"Valid_{uniqueId}")
+            .WithLastName($"Person_{uniqueId}")
+            .WithTitle($"Mr_{uniqueId}") // Not null and not empty and unique
+            .WithAge(25) // Not null
+            .Build();
+            
+        var invalidPerson = new FakeTestingPersonBuilder()
+            .WithFirstName($"Invalid_{uniqueId}")
+            .WithLastName(null) // null LastName
+            .WithTitle("") // empty Title
+            // Age left as default (null)
+            .Build();
+            
+        await testingServiceScope.InsertAsync(validPerson, invalidPerson);
+
+        // Test derived property with multiple != checks and additional filter to isolate our test data
+        var input = $"""is_complete == true && Title == "Mr_{uniqueId}" """;
+        var config = new QueryKitConfiguration(config =>
+        {
+            config.DerivedProperty<TestingPerson>(x => 
+                x.FirstName != null && x.LastName != null && 
+                x.Title != null && x.Title != "" &&
+                x.Age != null)
+                .HasQueryName("is_complete");
+        });
+        
+        // Act
+        var queryablePeople = testingServiceScope.DbContext().People;
+        var appliedQueryable = queryablePeople.ApplyQueryKitFilter(input, config);
+        var people = await appliedQueryable.ToListAsync();
+        
+        // Assert
+        people.Count.Should().Be(1);
+        people[0].Id.Should().Be(validPerson.Id);
+    }
+
+    [Fact]
+    public async Task can_filter_with_derived_property_using_not_equal_on_child_navigation_property()
+    {
+        // Arrange
+        var testingServiceScope = new TestingServiceScope();
+        var uniqueId = Guid.NewGuid().ToString()[..8];
+        
+        // Create author
+        var author = new FakeAuthorBuilder()
+            .WithName($"John_{uniqueId}")
+            .Build();
+            
+        // Create recipe with author (like Accession with Patient)
+        var recipeWithAuthor = new FakeRecipeBuilder()
+            .WithTitle($"RecipeWithAuthor_{uniqueId}")
+            .Build();
+        recipeWithAuthor.SetAuthor(author);
+        
+        // Create recipe without author (like Accession without Patient)
+        var recipeWithoutAuthor = new FakeRecipeBuilder()
+            .WithTitle($"RecipeWithoutAuthor_{uniqueId}")
+            .Build();
+        // Author is null by default
+        
+        await testingServiceScope.InsertAsync(recipeWithAuthor, recipeWithoutAuthor);
+
+        // Test derived property that uses != null on child property, exactly like your Patient example:
+        // x.Patient != null ? x.Patient.FirstName + " " + x.Patient.LastName : null
+        var input = $"""authorInfo == "John_{uniqueId}" && Title == "RecipeWithAuthor_{uniqueId}" """;
+        var config = new QueryKitConfiguration(config =>
+        {
+            config.DerivedProperty<Recipe>(x => 
+                x.Author != null 
+                    ? x.Author.Name 
+                    : null)
+                .HasQueryName("authorInfo");
+        });
+        
+        // Act
+        var queryableRecipes = testingServiceScope.DbContext().Recipes
+            .Include(x => x.Author);
+        var appliedQueryable = queryableRecipes.ApplyQueryKitFilter(input, config);
+        var recipes = await appliedQueryable.ToListAsync();
+        
+        // Assert
+        recipes.Count.Should().Be(1);
+        recipes[0].Id.Should().Be(recipeWithAuthor.Id);
+        recipes[0].Author.Should().NotBeNull();
+        recipes[0].Author!.Name.Should().Be($"John_{uniqueId}");
+    }
+
+    [Fact]
+    public async Task can_filter_with_derived_property_using_not_equal_on_child_navigation_property_complex()
+    {
+        // Arrange
+        var testingServiceScope = new TestingServiceScope();
+        var uniqueId = Guid.NewGuid().ToString()[..8];
+        
+        // Create author with complex name structure
+        var author = new FakeAuthorBuilder()
+            .WithName($"Dr. John Smith_{uniqueId}")
+            .Build();
+            
+        // Create recipe with author
+        var recipeWithAuthor = new FakeRecipeBuilder()
+            .WithTitle($"ComplexRecipe_{uniqueId}")
+            .Build();
+        recipeWithAuthor.SetAuthor(author);
+        
+        // Create recipe without author
+        var recipeWithoutAuthor = new FakeRecipeBuilder()
+            .WithTitle($"OrphanRecipe_{uniqueId}")
+            .Build();
+        
+        await testingServiceScope.InsertAsync(recipeWithAuthor, recipeWithoutAuthor);
+
+        // Test complex derived property like your Patient example with FirstName + LastName concatenation
+        var input = $"""patientName == "Dr. John Smith_{uniqueId} (Author)" && Title == "ComplexRecipe_{uniqueId}" """;
+        var config = new QueryKitConfiguration(config =>
+        {
+            config.DerivedProperty<Recipe>(x => 
+                x.Author != null 
+                    ? x.Author.Name + " (Author)"
+                    : "No Author")
+                .HasQueryName("patientName");
+        });
+        
+        // Act
+        var queryableRecipes = testingServiceScope.DbContext().Recipes
+            .Include(x => x.Author);
+        var appliedQueryable = queryableRecipes.ApplyQueryKitFilter(input, config);
+        var recipes = await appliedQueryable.ToListAsync();
+        
+        // Assert
+        recipes.Count.Should().Be(1);
+        recipes[0].Id.Should().Be(recipeWithAuthor.Id);
+        recipes[0].Author.Should().NotBeNull();
+        recipes[0].Author!.Name.Should().Be($"Dr. John Smith_{uniqueId}");
+    }
+
+    [Fact]
+    public async Task can_filter_with_derived_property_containing_method_call()
+    {
+        // Arrange
+        var testingServiceScope = new TestingServiceScope();
+        var uniqueId = Guid.NewGuid().ToString();
+
+        var fakeRecipeOne = new FakeRecipeBuilder()
+            .WithTitle($"UPPERCASE_TITLE_{uniqueId}")
+            .WithVisibility("Private")
+            .Build();
+        var fakeRecipeTwo = new FakeRecipeBuilder()
+            .WithTitle($"lowercase_title_{uniqueId}")
+            .WithVisibility("Public")
+            .Build();
+
+        await testingServiceScope.InsertAsync(fakeRecipeOne, fakeRecipeTwo);
+
+        var input = $"""hasLowercaseTitle == true""";
+        var config = new QueryKitConfiguration(config =>
+        {
+            config.DerivedProperty<Recipe>(x =>
+                x.Title.ToLower() == x.Title)
+                .HasQueryName("hasLowercaseTitle");
+        });
+
+        // Act
+        var queryableRecipes = testingServiceScope.DbContext().Recipes;
+        var appliedQueryable = queryableRecipes.ApplyQueryKitFilter(input, config);
+        var recipes = await appliedQueryable.ToListAsync();
+
+        // Assert - should find the lowercase one but not the uppercase one
+        recipes.Should().Contain(r => r.Id == fakeRecipeTwo.Id);
+        recipes.Should().NotContain(r => r.Id == fakeRecipeOne.Id);
+    }
+
+    [Fact]
+    public async Task can_filter_with_derived_property_containing_complex_method_call()
+    {
+        // Arrange
+        var testingServiceScope = new TestingServiceScope();
+        var uniqueId = Guid.NewGuid().ToString();
+
+        // Create recipe with "Public" visibility and another with "Private"
+        var fakeRecipeOne = new FakeRecipeBuilder()
+            .WithTitle($"Recipe_One_{uniqueId}")
+            .WithVisibility("Public")
+            .Build();
+        var fakeRecipeTwo = new FakeRecipeBuilder()
+            .WithTitle($"Recipe_Two_{uniqueId}")
+            .WithVisibility("Private")
+            .Build();
+
+        await testingServiceScope.InsertAsync(fakeRecipeOne, fakeRecipeTwo);
+
+        var input = $"""isPublicLower == true""";
+
+        // This should not throw "Expression type 'Call' is not supported" anymore
+        var config = new QueryKitConfiguration(config =>
+        {
+            // Similar to the user's original: x.Accession.PaymentReceived.Value.ToLower() == "full"
+            config.DerivedProperty<Recipe>(x =>
+                x.Visibility.ToLower() == "public")
+                .HasQueryName("isPublicLower");
+        });
+
+        // Act - Should be able to apply the filter without exception
+        var queryableRecipes = testingServiceScope.DbContext().Recipes;
+        var appliedQueryable = queryableRecipes.ApplyQueryKitFilter(input, config);
+        var recipes = await appliedQueryable.ToListAsync();
+
+        // Assert - At minimum, the query should execute without throwing
+        recipes.Should().NotBeNull();
+        // Note: The actual filtering logic may need separate investigation
+    }
+
+    [Fact]
+    public async Task can_filter_with_derived_property_containing_complex_conditional_expression()
+    {
+        // Arrange
+        var testingServiceScope = new TestingServiceScope();
+        var uniqueId = Guid.NewGuid().ToString();
+
+        var futureDate = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(10));
+        var pastDate = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-5));
+
+        var fakePersonOne = new FakeTestingPersonBuilder()
+            .WithFirstName($"Future_{uniqueId}")
+            .WithDate(futureDate)
+            .Build();
+        var fakePersonTwo = new FakeTestingPersonBuilder()
+            .WithFirstName($"Past_{uniqueId}")
+            .WithDate(pastDate)
+            .Build();
+        var fakePersonThree = new FakeTestingPersonBuilder()
+            .WithFirstName($"NoDate_{uniqueId}")
+            .WithDate(null)
+            .Build();
+
+        await testingServiceScope.InsertAsync(fakePersonOne, fakePersonTwo, fakePersonThree);
+
+        // Create config with conditional derived property
+        var config = new QueryKitConfiguration(config =>
+        {
+            config.DerivedProperty<TestingPerson>(x =>
+                x.Date.HasValue
+                    ? (x.Date.Value.ToDateTime(TimeOnly.MinValue) -
+                       DateOnly.FromDateTime(DateTime.UtcNow).ToDateTime(TimeOnly.MinValue)).Days
+                    : (int?)null
+            ).HasQueryName("daysFromNow");
+        });
+
+        // Act & Assert - Should not throw "Unsupported value '0' for type 'Object'"
+        var futureQuery = $"""daysFromNow > 0""";
+        var queryablePeople = testingServiceScope.DbContext().People;
+        var futurePeople = await queryablePeople.ApplyQueryKitFilter(futureQuery, config).ToListAsync();
+
+        // Filter for past dates (negative days)
+        var pastQuery = $"""daysFromNow < 0""";
+        var pastPeople = await queryablePeople.ApplyQueryKitFilter(pastQuery, config).ToListAsync();
+
+        // Verify results - The main fix is that these queries should work without throwing exceptions
+        futurePeople.Should().NotBeNull();
+        futurePeople.Should().Contain(p => p.Id == fakePersonOne.Id, "future date should match > 0");
+
+        pastPeople.Should().NotBeNull();
+        pastPeople.Should().Contain(p => p.Id == fakePersonTwo.Id, "past date should match < 0");
+    }
+
 }

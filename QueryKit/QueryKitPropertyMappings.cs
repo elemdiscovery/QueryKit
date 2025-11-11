@@ -168,18 +168,41 @@ public class QueryKitPropertyMappings
                     var prevPath = GetFullPropertyPath(call.Arguments[0]);
                     return $"{prevPath}.{propertyPath}";
                 }
-                break;
+                else
+                {
+                    // Handle general method calls
+                    var argumentsList = new List<string>();
+                    foreach (var arg in call.Arguments)
+                    {
+                        argumentsList.Add(arg != null ? GetFullPropertyPath(arg) : "null");
+                    }
+                    var argumentsString = string.Join(", ", argumentsList);
+
+                    if (call.Object != null)
+                    {
+                        // Instance method call
+                        var callObjectPath = GetFullPropertyPath(call.Object);
+                        return $"{callObjectPath}.{call.Method.Name}({argumentsString})";
+                    }
+                    else
+                    {
+                        // Static method call
+                        return $"{call.Method.DeclaringType?.Name}.{call.Method.Name}({argumentsString})";
+                    }
+                }
             case ExpressionType.Lambda:
                 var lambda = (LambdaExpression)expression;
                 return GetFullPropertyPath(lambda.Body);
             case ExpressionType.Convert:
                 var unary = (UnaryExpression)expression;
-                return GetFullPropertyPath(unary.Operand);
+                return unary.Operand != null ? GetFullPropertyPath(unary.Operand) : "null";
             case ExpressionType.MemberAccess:
                 var memberExpression = (MemberExpression)expression;
-                return memberExpression?.Expression?.NodeType == ExpressionType.Parameter 
-                    ? memberExpression.Member.Name 
-                    : $"{GetFullPropertyPath(memberExpression?.Expression)}.{memberExpression?.Member?.Name}";
+                if (memberExpression?.Expression == null)
+                    return memberExpression?.Member?.Name ?? "null";
+                return memberExpression.Expression.NodeType == ExpressionType.Parameter
+                    ? memberExpression.Member.Name
+                    : $"{GetFullPropertyPath(memberExpression.Expression)}.{memberExpression.Member?.Name}";
             case ExpressionType.Add:
             case ExpressionType.Subtract:
             case ExpressionType.Multiply:
@@ -199,8 +222,8 @@ public class QueryKitPropertyMappings
             case ExpressionType.MultiplyChecked:
             case ExpressionType.SubtractChecked:
                 var binary = (BinaryExpression)expression;
-                var left = GetFullPropertyPath(binary.Left);
-                var right = GetFullPropertyPath(binary.Right);
+                var left = binary.Left != null ? GetFullPropertyPath(binary.Left) : "null";
+                var right = binary.Right != null ? GetFullPropertyPath(binary.Right) : "null";
                 var op = GetOperator(binary.NodeType);
                 return $"{left} {op} {right}";
             case ExpressionType.Constant:
@@ -209,20 +232,23 @@ public class QueryKitPropertyMappings
             
             case ExpressionType.Conditional:
                 var conditional = (ConditionalExpression)expression;
-                var test = GetFullPropertyPath(conditional.Test);
-                var ifTrue = GetFullPropertyPath(conditional.IfTrue);
-                var ifFalse = GetFullPropertyPath(conditional.IfFalse);
+                var test = conditional.Test != null ? GetFullPropertyPath(conditional.Test) : "null";
+                var ifTrue = conditional.IfTrue != null ? GetFullPropertyPath(conditional.IfTrue) : "null";
+                var ifFalse = conditional.IfFalse != null ? GetFullPropertyPath(conditional.IfFalse) : "null";
                 return $"({test}) ? ({ifTrue}) : ({ifFalse})";
             
             case ExpressionType.New:
                 var newExpression = (NewExpression)expression;
-                var arguments = newExpression.Arguments.Select(GetFullPropertyPath);
-                return $"{newExpression.Constructor.DeclaringType.Name}({string.Join(", ", arguments)})";
+                var arguments = newExpression.Arguments.Select(arg => arg != null ? GetFullPropertyPath(arg) : "null");
+                return newExpression.Constructor != null
+                    ? $"{newExpression.Constructor.DeclaringType.Name}({string.Join(", ", arguments)})"
+                    : $"new({string.Join(", ", arguments)})";
             
             case ExpressionType.Invoke:
                 var invocation = (InvocationExpression)expression;
-                var invocationArguments = invocation.Arguments.Select(GetFullPropertyPath);
-                return $"{GetFullPropertyPath(invocation.Expression)}({string.Join(", ", invocationArguments)})";
+                var invocationArguments = invocation.Arguments.Select(arg => arg != null ? GetFullPropertyPath(arg) : "null");
+                var invocationExpr = invocation.Expression != null ? GetFullPropertyPath(invocation.Expression) : "null";
+                return $"{invocationExpr}({string.Join(", ", invocationArguments)})";
             
             case ExpressionType.ListInit:
                 var listInit = (ListInitExpression)expression;
@@ -357,6 +383,7 @@ public class QueryKitPropertyMappings
             ExpressionType.GreaterThanOrEqual => ">=",
             ExpressionType.LessThanOrEqual => "<=",
             ExpressionType.Equal => "==",
+            ExpressionType.NotEqual => "!=",
             _ => throw new NotSupportedException($"Operator for expression type '{nodeType}' is not supported.")
         };
     }
