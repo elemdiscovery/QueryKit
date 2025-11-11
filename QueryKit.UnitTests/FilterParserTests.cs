@@ -224,8 +224,9 @@ public class FilterParserTests
     {
         var input = """Id ^^ ["6d623e92-d2cf-4496-a2df-f49fa77328ee"]""";
         var filterExpression = FilterParser.ParseFilter<TestingPerson>(input);
+        // TODO: Add to DbContext Integration Tests
         filterExpression.ToString().Should()
-            .Be(""""x => value(System.Collections.Generic.List`1[System.Guid]).Contains(x.Id)"""");
+            .Be(""""x => value(System.Guid[]).Contains(x.Id)"""");
     }
 
     [Fact]
