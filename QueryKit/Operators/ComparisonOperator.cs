@@ -1027,7 +1027,39 @@ public abstract class ComparisonOperator : SmartEnum<ComparisonOperator>
             throw new QueryKitParsingException("Left expression should be of type IEnumerable<T>");
         }
 
-        var leftGenericType = left.Type.GetGenericArguments()[0];
+        // Handle nullable types - unwrap if needed
+        var leftType = left.Type;
+        var underlyingType = Nullable.GetUnderlyingType(leftType);
+        var isNullable = underlyingType != null;
+        if (isNullable)
+        {
+            leftType = underlyingType;
+        }
+
+        // Handle arrays and generic collections differently
+        Type elementType;
+        if (leftType.IsArray)
+        {
+            elementType = leftType.GetElementType();
+            if (elementType == null)
+            {
+                throw new QueryKitParsingException("Could not determine element type of array");
+            }
+        }
+        else if (leftType.IsGenericType)
+        {
+            var genericArgs = leftType.GetGenericArguments();
+            if (genericArgs.Length == 0)
+            {
+                throw new QueryKitParsingException("Generic type has no type arguments");
+            }
+            elementType = genericArgs[0];
+        }
+        else
+        {
+            throw new QueryKitParsingException("Left expression is not a collection type");
+        }
+
         var rightType = right.Type;
 
         if (rightType != typeof(int))
@@ -1042,9 +1074,32 @@ public abstract class ComparisonOperator : SmartEnum<ComparisonOperator>
             throw new QueryKitParsingException("Count method not found");
         }
 
-        var specificCountMethod = countMethod.MakeGenericMethod(leftGenericType);
+        var specificCountMethod = countMethod.MakeGenericMethod(elementType);
 
-        var countExpression = Expression.Call(null, specificCountMethod, left);
+        // If left is nullable, we need to handle null case
+        // Marten supports Count() directly on arrays and collections without AsEnumerable()
+        Expression leftForCount = left;
+        if (isNullable)
+        {
+            // For nullable collections, we need to use null-coalescing to handle null case
+            // Create an empty array of the correct type
+            object emptyArray;
+            if (leftType.IsArray)
+            {
+                emptyArray = Array.CreateInstance(elementType, 0);
+            }
+            else
+            {
+                // For generic collections like List<T>, create an empty instance
+                var emptyCollectionType = typeof(List<>).MakeGenericType(elementType);
+                emptyArray = Activator.CreateInstance(emptyCollectionType);
+            }
+            leftForCount = Expression.Coalesce(left, Expression.Constant(emptyArray, leftType));
+        }
+
+        // Marten supports Count() directly on arrays and collections - no need for AsEnumerable()
+        // Arrays and generic collections both implement IEnumerable<T>, so Count() works directly
+        var countExpression = Expression.Call(null, specificCountMethod, leftForCount);
         var comparisonMethod = typeof(Expression).GetMethod(methodName, new[] { typeof(Expression), typeof(Expression) });
         if (comparisonMethod == null)
         {
