@@ -1,0 +1,11 @@
+---
+alwaysApply: true
+---
+
+# Query Kit Fork
+
+This library is a fork from an upstream library. Meaning:
+
+- All changes should be made with the intention of making it easy to merge in upstream stranges.
+- Keep large changes in separate files and wrap changes in methods as much as possible.
+- Provide good descriptions of the before and after changes in the comments, so it's clear what changed.

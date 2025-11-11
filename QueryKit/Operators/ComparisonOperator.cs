@@ -716,11 +716,12 @@ public abstract class ComparisonOperator : SmartEnum<ComparisonOperator>
         public override bool IsCountOperator() => false; 
         public override Expression GetExpression<T>(Expression left, Expression right, Type? dbContextType)
         {
-            if (left.Type.IsGenericType && 
+            if ((left.Type.IsGenericType && 
                 (left.Type.GetGenericTypeDefinition() == typeof(List<>) || 
                  left.Type.GetGenericTypeDefinition() == typeof(ICollection<>) ||
                  left.Type.GetGenericTypeDefinition() == typeof(IList<>) ||
                  typeof(IEnumerable<>).IsAssignableFrom(left.Type.GetGenericTypeDefinition())))
+                || left.Type.IsArray)
             {
                 return GetCollectionExpression(left, right, Expression.Equal, UsesAll);
             }
@@ -739,11 +740,12 @@ public abstract class ComparisonOperator : SmartEnum<ComparisonOperator>
         public override bool IsCountOperator() => false; 
         public override Expression GetExpression<T>(Expression left, Expression right, Type? dbContextType)
         {
-            if (left.Type.IsGenericType && 
+            if ((left.Type.IsGenericType && 
                 (left.Type.GetGenericTypeDefinition() == typeof(List<>) || 
                  left.Type.GetGenericTypeDefinition() == typeof(ICollection<>) ||
                  left.Type.GetGenericTypeDefinition() == typeof(IList<>) ||
                  typeof(IEnumerable<>).IsAssignableFrom(left.Type.GetGenericTypeDefinition())))
+                || left.Type.IsArray)
             {
                 return GetCollectionExpression(left, right, Expression.NotEqual, UsesAll);
             }
@@ -927,7 +929,37 @@ public abstract class ComparisonOperator : SmartEnum<ComparisonOperator>
     
     private Expression GetCollectionExpression(Expression left, Expression right, Func<Expression, Expression, Expression> comparisonFunction, bool usesAll)
     {
-        var xParameter = Expression.Parameter(left.Type.GetGenericArguments()[0], "z");
+        Type elementType;
+        if (left.Type.IsArray)
+        {
+            elementType = left.Type.GetElementType();
+        }
+        else if (left.Type.IsGenericType)
+        {
+            elementType = left.Type.GetGenericArguments()[0];
+        }
+        else
+        {
+            throw new QueryKitParsingException("Left expression is not a collection type");
+        }
+        
+        // Convert right value to correct type BEFORE creating the lambda
+        if (right is ConstantExpression constExpr && constExpr.Type == typeof(string) &&
+            (elementType == typeof(Guid) || elementType == typeof(Guid?)))
+        {
+            var strVal = (string)constExpr.Value;
+            if (Guid.TryParse(strVal.Trim('"'), out var guidVal))
+            {
+                object val = elementType == typeof(Guid?) ? (Guid?)guidVal : guidVal;
+                right = Expression.Constant(val, elementType);
+            }
+            else
+            {
+                throw new QueryKitParsingException($"Could not parse '{strVal}' as Guid for collection comparison");
+            }
+        }
+        
+        var xParameter = Expression.Parameter(elementType, "z");
         Expression body;
 
         if (CaseInsensitive && xParameter.Type == typeof(string) && right.Type == typeof(string))
@@ -946,9 +978,17 @@ public abstract class ComparisonOperator : SmartEnum<ComparisonOperator>
         var anyMethod = typeof(Enumerable)
             .GetMethods()
             .Single(m => m.Name == (usesAll ? "All" : "Any") && m.GetParameters().Length == 2)
-            .MakeGenericMethod(left.Type.GetGenericArguments()[0]);
+            .MakeGenericMethod(elementType);
 
-        return Expression.Call(anyMethod, left, anyLambda);
+        // If left is array, convert to IEnumerable<T>
+        Expression leftEnumerable = left;
+        if (left.Type.IsArray)
+        {
+            var asEnumerableMethod = typeof(Enumerable).GetMethod("AsEnumerable").MakeGenericMethod(elementType);
+            leftEnumerable = Expression.Call(asEnumerableMethod, left);
+        }
+
+        return Expression.Call(anyMethod, leftEnumerable, anyLambda);
     }
     
     private Expression GetCollectionExpression(Expression left, Expression right, string methodName, bool negate, bool usesAll)
@@ -987,7 +1027,39 @@ public abstract class ComparisonOperator : SmartEnum<ComparisonOperator>
             throw new QueryKitParsingException("Left expression should be of type IEnumerable<T>");
         }
 
-        var leftGenericType = left.Type.GetGenericArguments()[0];
+        // Handle nullable types - unwrap if needed
+        var leftType = left.Type;
+        var underlyingType = Nullable.GetUnderlyingType(leftType);
+        var isNullable = underlyingType != null;
+        if (isNullable)
+        {
+            leftType = underlyingType;
+        }
+
+        // Handle arrays and generic collections differently
+        Type elementType;
+        if (leftType.IsArray)
+        {
+            elementType = leftType.GetElementType();
+            if (elementType == null)
+            {
+                throw new QueryKitParsingException("Could not determine element type of array");
+            }
+        }
+        else if (leftType.IsGenericType)
+        {
+            var genericArgs = leftType.GetGenericArguments();
+            if (genericArgs.Length == 0)
+            {
+                throw new QueryKitParsingException("Generic type has no type arguments");
+            }
+            elementType = genericArgs[0];
+        }
+        else
+        {
+            throw new QueryKitParsingException("Left expression is not a collection type");
+        }
+
         var rightType = right.Type;
 
         if (rightType != typeof(int))
@@ -1002,9 +1074,32 @@ public abstract class ComparisonOperator : SmartEnum<ComparisonOperator>
             throw new QueryKitParsingException("Count method not found");
         }
 
-        var specificCountMethod = countMethod.MakeGenericMethod(leftGenericType);
+        var specificCountMethod = countMethod.MakeGenericMethod(elementType);
 
-        var countExpression = Expression.Call(null, specificCountMethod, left);
+        // If left is nullable, we need to handle null case
+        // Marten supports Count() directly on arrays and collections without AsEnumerable()
+        Expression leftForCount = left;
+        if (isNullable)
+        {
+            // For nullable collections, we need to use null-coalescing to handle null case
+            // Create an empty array of the correct type
+            object emptyArray;
+            if (leftType.IsArray)
+            {
+                emptyArray = Array.CreateInstance(elementType, 0);
+            }
+            else
+            {
+                // For generic collections like List<T>, create an empty instance
+                var emptyCollectionType = typeof(List<>).MakeGenericType(elementType);
+                emptyArray = Activator.CreateInstance(emptyCollectionType);
+            }
+            leftForCount = Expression.Coalesce(left, Expression.Constant(emptyArray, leftType));
+        }
+
+        // Marten supports Count() directly on arrays and collections - no need for AsEnumerable()
+        // Arrays and generic collections both implement IEnumerable<T>, so Count() works directly
+        var countExpression = Expression.Call(null, specificCountMethod, leftForCount);
         var comparisonMethod = typeof(Expression).GetMethod(methodName, new[] { typeof(Expression), typeof(Expression) });
         if (comparisonMethod == null)
         {

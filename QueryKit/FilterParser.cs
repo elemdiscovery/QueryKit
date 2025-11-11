@@ -306,7 +306,15 @@ public static class FilterParser
             {
                 return Expression.Constant(intVal, typeof(int));
             }
-            targetType = targetType.GetGenericArguments()[0];
+            // Fix: handle arrays as well as generic collections
+            if (targetType.IsArray)
+            {
+                targetType = targetType.GetElementType();
+            }
+            else
+            {
+                targetType = targetType.GetGenericArguments()[0];
+            }
             return CreateRightExprFromType(targetType, right, op);
         }
         
@@ -632,27 +640,7 @@ public static class FilterParser
                 }
                 
                 if (temp.leftExpr.Type == typeof(Guid) || temp.leftExpr.Type == typeof(Guid?))
-                {
-                    // Try to determine the property path for HasConversion support
-                    string? guidPropertyPath = null;
-                    if (temp.leftExpr is MemberExpression guidMemberExpr)
-                    {
-                        guidPropertyPath = GetPropertyPath(guidMemberExpr, parameter);
-                    }
-
-                    // Only convert to string for operators that require string comparison (Contains, StartsWith, etc.)
-                    // For equality/comparison operators, keep as GUID for better EF Core translation
-                    if (temp.op.IsStringComparisonOperator())
-                    {
-                        var guidStringExpr = HandleGuidConversion(temp.leftExpr, temp.leftExpr.Type);
-                        return temp.op.GetExpression<T>(guidStringExpr, CreateRightExpr(temp.leftExpr, temp.right, temp.op, config, guidPropertyPath),
-                            config?.DbContextType);
-                    }
-
-                    // For non-string operators, use direct GUID comparison
-                    return temp.op.GetExpression<T>(temp.leftExpr, CreateRightExpr(temp.leftExpr, temp.right, temp.op, config, guidPropertyPath),
-                        config?.DbContextType);
-                }
+                    return HandleGuidComparison<T>(temp.leftExpr, temp.right, temp.op, config);
 
                 // Check if the right side is a property path for property-to-property comparison
                 if (IsPropertyPath(temp.right, parameter.Type))
@@ -663,16 +651,13 @@ public static class FilterParser
                         // Handle GUID conversion for property-to-property comparisons
                         // Only convert to string for string operators
                         var leftExpr = temp.leftExpr;
-                        if (temp.op.IsStringComparisonOperator())
+                        if (leftExpr.Type == typeof(Guid) || leftExpr.Type == typeof(Guid?))
                         {
-                            if (leftExpr.Type == typeof(Guid) || leftExpr.Type == typeof(Guid?))
-                            {
-                                leftExpr = HandleGuidConversion(leftExpr, leftExpr.Type);
-                            }
-                            if (rightPropertyExpr.Type == typeof(Guid) || rightPropertyExpr.Type == typeof(Guid?))
-                            {
-                                rightPropertyExpr = HandleGuidConversion(rightPropertyExpr, rightPropertyExpr.Type);
-                            }
+                            leftExpr = HandleGuidConversion(leftExpr, leftExpr.Type, null, config);
+                        }
+                        if (rightPropertyExpr.Type == typeof(Guid) || rightPropertyExpr.Type == typeof(Guid?))
+                        {
+                            rightPropertyExpr = HandleGuidConversion(rightPropertyExpr, rightPropertyExpr.Type, null, config);
                         }
 
                         // Ensure compatible types for property-to-property comparison
@@ -687,27 +672,26 @@ public static class FilterParser
                 {
                     propertyPath = GetPropertyPath(memberExpr, parameter);
                 }
-
+                
                 var leftExprForComparison = temp.leftExpr;
-
                 // If the left expression is a conditional with Object type, convert it to the proper type
                 if (leftExprForComparison.Type == typeof(object))
                 {
                     var innerExpr = leftExprForComparison;
-
+                    
                     // Unwrap Convert/Unary expressions
                     while (innerExpr is UnaryExpression unaryExpr && unaryExpr.NodeType == ExpressionType.Convert)
                     {
                         innerExpr = unaryExpr.Operand;
                     }
-
+                    
                     if (innerExpr is ConditionalExpression conditionalExpr)
                     {
                         // Determine the actual type
                         var trueType = conditionalExpr.IfTrue.Type;
                         var falseType = conditionalExpr.IfFalse.Type;
                         Type actualType = typeof(object);
-
+                        
                         if (trueType == falseType)
                         {
                             actualType = trueType;
@@ -716,7 +700,6 @@ public static class FilterParser
                         {
                             var underlyingTrue = Nullable.GetUnderlyingType(trueType) ?? trueType;
                             var underlyingFalse = Nullable.GetUnderlyingType(falseType) ?? falseType;
-
                             if (underlyingTrue == underlyingFalse)
                             {
                                 actualType = typeof(Nullable<>).MakeGenericType(underlyingTrue);
@@ -730,15 +713,13 @@ public static class FilterParser
                         {
                             actualType = falseType;
                         }
-
+                        
                         // If we found a better type, recreate the conditional with the correct type
                         if (actualType != typeof(object) && actualType != null)
                         {
-                            // Create a new conditional expression with the correct return type
-                            // This ensures proper type handling without unnecessary conversions
                             var newIfTrue = conditionalExpr.IfTrue;
                             var newIfFalse = conditionalExpr.IfFalse;
-
+                            
                             // Convert branches to the target type if needed
                             if (newIfTrue.Type != actualType)
                             {
@@ -748,7 +729,7 @@ public static class FilterParser
                             {
                                 newIfFalse = Expression.Convert(newIfFalse, actualType);
                             }
-
+                            
                             leftExprForComparison = Expression.Condition(
                                 conditionalExpr.Test,
                                 newIfTrue,
@@ -757,16 +738,16 @@ public static class FilterParser
                         }
                     }
                 }
-
+                
                 var rightExpr = CreateRightExpr(leftExprForComparison, temp.right, temp.op, config, propertyPath);
-
+                
                 // Handle nested collection filtering
                 if (leftExprForComparison is MethodCallExpression methodCall && IsNestedCollectionExpression(methodCall))
                 {
                     return CreateNestedCollectionFilterExpression<T>(methodCall, rightExpr, temp.op);
                 }
-
-
+                
+                
                 return temp.op.GetExpression<T>(leftExprForComparison, rightExpr, config?.DbContextType);
             });
 
@@ -830,7 +811,7 @@ public static class FilterParser
                             var selectLambda = Expression.Lambda(lambdaBody, innerParameter);
                             var selectResult = Expression.Call(null, selectMethod, member, selectLambda);
 
-                            return HandleGuidConversion(selectResult, propertyType, "Select");
+                            return HandleGuidConversion(selectResult, propertyType, "Select", config);
                         }
                     }
                 }
@@ -970,31 +951,18 @@ public static class FilterParser
             (op, left, right) => op.GetExpression<T>(left, right)
         );
     
-    private static Expression GetGuidToStringExpression(Expression leftExpr)
-    {
-        var toStringMethod = typeof(Guid).GetMethod("ToString", Type.EmptyTypes);
-
-        return leftExpr.Type == typeof(Guid?) ?
-            Expression.Condition(
-                Expression.Property(leftExpr, "HasValue"),
-                Expression.Call(Expression.Property(leftExpr, "Value"), toStringMethod!),
-                Expression.Constant(null, typeof(string))
-            ) :
-            Expression.Call(leftExpr, toStringMethod!);
-    }
-
-    private static Expression HandleGuidConversion(Expression expression, Type propertyType, string? selectMethodName = null)
+    private static Expression HandleGuidConversion(Expression expression, Type propertyType, string? selectMethodName = null, IQueryKitConfiguration? config = null)
     {
         if (propertyType != typeof(Guid) && propertyType != typeof(Guid?)) return expression;
 
-        if (string.IsNullOrWhiteSpace(selectMethodName)) return GetGuidToStringExpression(expression);
+        if (string.IsNullOrWhiteSpace(selectMethodName)) return expression;
 
         var selectMethod = typeof(Enumerable).GetMethods()
             .First(m => m.Name == selectMethodName && m.GetParameters().Length == 2)
             .MakeGenericMethod(propertyType, typeof(string));
 
         var param = Expression.Parameter(propertyType, "g");
-        var toStringLambda = Expression.Lambda(GetGuidToStringExpression(param), param);
+        var toStringLambda = Expression.Lambda(Expression.Call(param, typeof(Guid).GetMethod("ToString", Type.EmptyTypes)), param);
 
         return Expression.Call(selectMethod, expression, toStringLambda);
     }
@@ -1269,6 +1237,97 @@ public static class FilterParser
         // Default to string
         return value;
     }
+
+    // --- BEGIN FORK: Custom Guid handling for Marten/EF compatibility ---
+    private static Expression HandleGuidComparison<T>(Expression leftExpr, string right, ComparisonOperator op, IQueryKitConfiguration? config)
+    {
+        if (OperatorTypeHelper.IsStringOperator(op))
+        {
+            // Convert left to string
+            var toStringMethod = typeof(Guid).GetMethod("ToString", Type.EmptyTypes);
+            Expression leftString = leftExpr.Type == typeof(Guid?)
+                ? Expression.Condition(
+                    Expression.Property(leftExpr, "HasValue"),
+                    Expression.Call(Expression.Property(leftExpr, "Value"), toStringMethod!),
+                    Expression.Constant(null, typeof(string))
+                )
+                : Expression.Call(leftExpr, toStringMethod!);
+            // Right is a string, trim quotes
+            var rightStringValue = right.Trim('"');
+            var rightStringExpr = Expression.Constant(rightStringValue, typeof(string));
+            return op.GetExpression<T>(leftString, rightStringExpr, config?.DbContextType);
+        }
+        bool isNullable = leftExpr.Type == typeof(Guid?);
+        bool isNull = right.Trim('"').Equals("null", StringComparison.OrdinalIgnoreCase);
+        var opName = op.Name;
+        // Handle 'in' and 'not in' operators (array)
+        if ((opName == "^^" || opName == "!^^" || opName == "^$" || opName == "!^$") && right.StartsWith("[") && right.EndsWith("]"))
+        {
+            var guids = right.Trim('[', ']').Split(',')
+                .Select(x => x.Trim().Trim('"'))
+                .Select(x => Guid.TryParse(x, out var g) ? g : throw new ParsingException(new InvalidOperationException($"Invalid Guid value in array: '{x}'")))
+                .ToArray();
+            var leftType = leftExpr.Type;
+            Expression leftForContains = leftExpr;
+            
+            // Create the array with the correct element type to match leftExpr
+            Expression arrayExpr;
+            MethodInfo containsMethod;
+            
+            if (leftType == typeof(Guid?))
+            {
+                var nullableGuids = guids.Select(g => (Guid?)g).ToArray();
+                arrayExpr = Expression.Constant(nullableGuids, typeof(Guid?[]));
+                containsMethod = typeof(Enumerable).GetMethods()
+                    .First(m => m.Name == "Contains" && m.GetParameters().Length == 2)
+                    .MakeGenericMethod(typeof(Guid?));
+            }
+            else if (leftType == typeof(Guid))
+            {
+                var nonNullableGuids = guids.ToArray();
+                arrayExpr = Expression.Constant(nonNullableGuids, typeof(Guid[]));
+                containsMethod = typeof(Enumerable).GetMethods()
+                    .First(m => m.Name == "Contains" && m.GetParameters().Length == 2)
+                    .MakeGenericMethod(typeof(Guid));
+            }
+            else
+            {
+                throw new ParsingException(new InvalidOperationException($"Unsupported left expression type for Guid array comparison: {leftType}"));
+            }
+            
+            // Call arrayExpr.Contains(leftExpr) - checking if the single value is in the array
+            var containsExpr = Expression.Call(containsMethod, arrayExpr, leftForContains);
+            
+            // For 'not in', negate the expression
+            if (opName == "!^^" || opName == "!^$")
+                return Expression.Not(containsExpr);
+            return containsExpr;
+        }
+        // Handle null for nullable Guid
+        if (isNull && isNullable)
+        {
+            return op.GetExpression<T>(leftExpr, Expression.Constant(null, typeof(Guid?)), config?.DbContextType);
+        }
+        // Handle single Guid
+        if (Guid.TryParse(right.Trim('"'), out var guidValue))
+        {
+            // Ensure type compatibility for property-to-property and property-to-value comparisons
+            var rightType = leftExpr.Type;
+            object rightGuidObj = guidValue;
+            if (rightType == typeof(Guid?))
+            {
+                rightGuidObj = (Guid?)guidValue;
+            }
+            else if (rightType == typeof(Guid))
+            {
+                rightGuidObj = guidValue;
+            }
+            var rightGuidExpr = Expression.Constant(rightGuidObj, rightType);
+            return op.GetExpression<T>(leftExpr, rightGuidExpr, config?.DbContextType);
+        }
+        throw new ParsingException(new InvalidOperationException($"Invalid Guid value: '{right}'"));
+    }
+    // --- END FORK ---
 }
 
 
