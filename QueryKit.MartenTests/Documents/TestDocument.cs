@@ -11,6 +11,7 @@ public class TestDocument
     public string[]? NullableTags { get; set; }
     public List<NestedItem> Items { get; set; } = [];
     public List<NestedItem>? NullableItems { get; set; }
+    public NestedItem? SingleNestItem { get; set; }
     public decimal Rating { get; set; }
     public int Age { get; set; }
     public BirthMonthEnum BirthMonth { get; set; }

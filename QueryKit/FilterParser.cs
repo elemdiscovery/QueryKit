@@ -320,6 +320,24 @@ public static class FilterParser
         
         var rawType = targetType;
         
+        // Handle null for any nullable type (nullable value types or nullable reference types)
+        if (right == "null")
+        {
+            // For nullable value types (like Guid?, int?, etc.)
+            if (Nullable.GetUnderlyingType(rawType) != null)
+            {
+                return Expression.Constant(null, rawType);
+            }
+            // For nullable reference types (like string?, NestedItem?, etc.)
+            // Check if the type is a reference type (not a value type)
+            if (!rawType.IsValueType)
+            {
+                return Expression.Constant(null, rawType);
+            }
+            // For non-nullable value types, we can't assign null, but we'll let it fall through
+            // to potentially throw a more specific error
+        }
+        
         targetType = TransformTargetTypeIfNullable(targetType);
 
         if (TypeConversionFunctions.TryGetValue(targetType, out var conversionFunction))
